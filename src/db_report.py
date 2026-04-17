@@ -4,6 +4,7 @@ import sqlite3
 from typing import Dict, List, Optional
 
 from championship_config import CHAMPIONSHIP_POINTS_BY_POSITION
+from team_aliases import TEAM_NAME_ALIASES
 
 DB_PATH_DEFAULT = os.path.join("data", "quiz_results.db")
 
@@ -12,6 +13,13 @@ def _connect(db_path: str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _canonical_team_name(team_name: str) -> str:
+    """Map team aliases to a canonical championship team name."""
+    normalized = team_name.strip()
+    alias_lookup = {alias.casefold(): canonical for alias, canonical in TEAM_NAME_ALIASES.items()}
+    return alias_lookup.get(normalized.casefold(), normalized)
 
 
 def get_event_list(db_path: str = DB_PATH_DEFAULT) -> List[Dict]:
@@ -149,7 +157,7 @@ def get_championship_standings(year: int, db_path: str = DB_PATH_DEFAULT) -> Dic
             for fallback_pos, row in enumerate(rows, start=1):
                 rank = row["team_rank"] if row["team_rank"] is not None else fallback_pos
                 points = CHAMPIONSHIP_POINTS_BY_POSITION.get(rank, 0)
-                team_name = row["team_name"]
+                team_name = _canonical_team_name(row["team_name"])
                 if team_name not in standings:
                     standings[team_name] = {
                         "team_name": team_name,
