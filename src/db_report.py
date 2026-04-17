@@ -631,6 +631,18 @@ def get_round_difficulty_report(year: int, db_path: str = DB_PATH_DEFAULT) -> Di
 
         rows = conn.execute(
             """
+            WITH ranked_teams AS (
+                SELECT
+                    t.id,
+                    t.event_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY t.event_id
+                        ORDER BY COALESCE(t.team_rank, 9999), t.total DESC, t.puzzle_points DESC, t.team_name ASC
+                    ) AS rn
+                FROM quiz_teams t
+                JOIN quiz_events e ON e.id = t.event_id
+                WHERE e.event_date LIKE ?
+            )
             SELECT
                 ts.round_name,
                 CASE
@@ -643,8 +655,8 @@ def get_round_difficulty_report(year: int, db_path: str = DB_PATH_DEFAULT) -> Di
                 END AS adjusted_points
             FROM team_scores ts
             JOIN quiz_teams qt ON qt.id = ts.team_id
-            JOIN quiz_events e ON e.id = qt.event_id
-            WHERE e.event_date LIKE ?
+                        JOIN ranked_teams rt ON rt.id = qt.id
+                        WHERE rt.rn <= 30
               AND ts.points IS NOT NULL
             """,
             (year_prefix,),
@@ -709,6 +721,318 @@ def print_round_difficulty_report(year: int, db_path: str = DB_PATH_DEFAULT) -> 
         )
 
 
+def get_event_difficulty_report(
+    db_path: str = DB_PATH_DEFAULT,
+    event_id: Optional[int] = None,
+    source_file: Optional[str] = None,
+    event_date: Optional[str] = None,
+    location: Optional[str] = None,
+) -> Dict:
+    """Compare round averages in one event with all other events of the same year."""
+    resolved_event_id = _resolve_event_id(
+        db_path, event_id=event_id, source_file=source_file, event_date=event_date, location=location
+    )
+
+    with _connect(db_path) as conn:
+        event = conn.execute(
+            """
+            SELECT id, event_date, location, source_file
+            FROM quiz_events
+            WHERE id = ?
+            """,
+            (resolved_event_id,),
+        ).fetchone()
+        if event is None:
+            raise ValueError(f"No event found with id={resolved_event_id}")
+
+        year_prefix = f"{int(event['event_date'][:4]):04d}-%"
+
+        event_rows = conn.execute(
+            """
+            WITH ranked_teams AS (
+                SELECT
+                    t.id,
+                    t.event_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY t.event_id
+                        ORDER BY COALESCE(t.team_rank, 9999), t.total DESC, t.puzzle_points DESC, t.team_name ASC
+                    ) AS rn
+                FROM quiz_teams t
+                WHERE t.event_id = ?
+            )
+            SELECT
+                ts.round_name,
+                AVG(
+                    CASE
+                        WHEN ts.round_name = qt.bonus_round THEN
+                            CASE
+                                WHEN ts.points % 2 = 0 THEN ts.points / 2
+                                ELSE (ts.points - 1) / 2
+                            END
+                        ELSE ts.points
+                    END
+                ) AS avg_points,
+                COUNT(*) AS samples
+            FROM team_scores ts
+            JOIN quiz_teams qt ON qt.id = ts.team_id
+            JOIN ranked_teams rt ON rt.id = qt.id
+            WHERE qt.event_id = ?
+              AND rt.rn <= 30
+              AND ts.points IS NOT NULL
+            GROUP BY ts.round_name
+            """,
+            (resolved_event_id, resolved_event_id),
+        ).fetchall()
+
+        other_rows = conn.execute(
+            """
+            WITH ranked_teams AS (
+                SELECT
+                    t.id,
+                    t.event_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY t.event_id
+                        ORDER BY COALESCE(t.team_rank, 9999), t.total DESC, t.puzzle_points DESC, t.team_name ASC
+                    ) AS rn
+                FROM quiz_teams t
+                JOIN quiz_events e ON e.id = t.event_id
+                WHERE e.event_date LIKE ?
+            )
+            SELECT
+                ts.round_name,
+                AVG(
+                    CASE
+                        WHEN ts.round_name = qt.bonus_round THEN
+                            CASE
+                                WHEN ts.points % 2 = 0 THEN ts.points / 2
+                                ELSE (ts.points - 1) / 2
+                            END
+                        ELSE ts.points
+                    END
+                ) AS avg_points,
+                COUNT(*) AS samples
+            FROM team_scores ts
+            JOIN quiz_teams qt ON qt.id = ts.team_id
+                        JOIN ranked_teams rt ON rt.id = qt.id
+                        WHERE rt.rn <= 30
+                            AND qt.event_id != ?
+              AND ts.points IS NOT NULL
+            GROUP BY ts.round_name
+            """,
+                        (year_prefix, resolved_event_id),
+        ).fetchall()
+
+    event_map = {row["round_name"]: {"avg_points": row["avg_points"], "samples": row["samples"]} for row in event_rows}
+    other_map = {row["round_name"]: {"avg_points": row["avg_points"], "samples": row["samples"]} for row in other_rows}
+
+    round_order = {name: idx for idx, name in ROUND_NAMES.items()}
+    round_names = sorted(
+        set(event_map.keys()) | set(other_map.keys()),
+        key=lambda name: round_order.get(name, 999),
+    )
+
+    rounds = []
+    for round_name in round_names:
+        event_avg = event_map.get(round_name, {}).get("avg_points")
+        other_avg = other_map.get(round_name, {}).get("avg_points")
+        diff = (event_avg - other_avg) if event_avg is not None and other_avg is not None else None
+
+        rounds.append(
+            {
+                "round_name": round_name,
+                "event_avg": event_avg,
+                "other_avg": other_avg,
+                "diff": diff,
+                "event_samples": event_map.get(round_name, {}).get("samples", 0),
+                "other_samples": other_map.get(round_name, {}).get("samples", 0),
+            }
+        )
+
+    return {
+        "event": dict(event),
+        "year": int(event["event_date"][:4]),
+        "rounds": rounds,
+    }
+
+
+def print_event_difficulty_report(
+    db_path: str = DB_PATH_DEFAULT,
+    event_id: Optional[int] = None,
+    source_file: Optional[str] = None,
+    event_date: Optional[str] = None,
+    location: Optional[str] = None,
+) -> None:
+    """Print event round-average comparison against other events in same year."""
+    result = get_event_difficulty_report(
+        db_path=db_path,
+        event_id=event_id,
+        source_file=source_file,
+        event_date=event_date,
+        location=location,
+    )
+    event = result["event"]
+
+    print(f"Event difficulty report: {event['event_date']} @ {event['location']} ({event['source_file']})")
+    print(f"Comparison baseline: all other events in {result['year']}")
+    print()
+
+    if not result["rounds"]:
+        print("No round data found for this event.")
+        return
+
+    print(f"{'Round':20}  {'Event Avg':>9}  {'Other Avg':>9}  {'Diff':>8}  {'N_evt':>5}  {'N_oth':>5}")
+    print("""--------------------  ---------  ---------  --------  -----  -----""")
+    for row in result["rounds"]:
+        event_avg_text = f"{row['event_avg']:.2f}" if row["event_avg"] is not None else "-"
+        other_avg_text = f"{row['other_avg']:.2f}" if row["other_avg"] is not None else "-"
+        diff_text = f"{row['diff']:+.2f}" if row["diff"] is not None else "-"
+        print(
+            f"{row['round_name'][:20]:20}  {event_avg_text:>9}  {other_avg_text:>9}  {diff_text:>8}  {row['event_samples']:>5}  {row['other_samples']:>5}"
+        )
+
+
+def get_round_strength_ranking(
+    year: int,
+    round_name: Optional[str] = None,
+    min_events: int = 2,
+    db_path: str = DB_PATH_DEFAULT,
+) -> Dict:
+    """Return league-wide team strength ranking per round for a given year."""
+    year_prefix = f"{year:04d}-%"
+    allowed_rounds = set(ROUND_NAMES.values())
+    if round_name is not None and round_name not in allowed_rounds:
+        raise ValueError(
+            f"Unknown round '{round_name}'. Allowed values: {', '.join(ROUND_NAMES.values())}"
+        )
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                qt.team_name,
+                ts.round_name,
+                CASE
+                    WHEN ts.round_name = qt.bonus_round THEN
+                        CASE
+                            WHEN ts.points % 2 = 0 THEN ts.points / 2
+                            ELSE (ts.points - 1) / 2
+                        END
+                    ELSE ts.points
+                END AS adjusted_points
+            FROM team_scores ts
+            JOIN quiz_teams qt ON qt.id = ts.team_id
+            JOIN quiz_events e ON e.id = qt.event_id
+            WHERE e.event_date LIKE ?
+              AND ts.points IS NOT NULL
+            """,
+            (year_prefix,),
+        ).fetchall()
+
+    round_team_scores: Dict[str, Dict[str, List[float]]] = {}
+    for row in rows:
+        row_round = row["round_name"]
+        if row_round not in allowed_rounds:
+            continue
+        if round_name is not None and row_round != round_name:
+            continue
+
+        team = _canonical_team_name(row["team_name"])
+        round_team_scores.setdefault(row_round, {}).setdefault(team, []).append(float(row["adjusted_points"]))
+
+    round_order = {name: idx for idx, name in ROUND_NAMES.items()}
+    rankings = []
+    for row_round in sorted(round_team_scores.keys(), key=lambda r: round_order.get(r, 999)):
+        team_rows = []
+        for team_name, values in round_team_scores[row_round].items():
+            events = len(values)
+            if events < min_events:
+                continue
+            avg_points = sum(values) / events
+            team_rows.append(
+                {
+                    "team_name": team_name,
+                    "avg_points": avg_points,
+                    "events": events,
+                    "best": max(values),
+                    "worst": min(values),
+                }
+            )
+
+        team_rows.sort(key=lambda t: (-t["avg_points"], -t["events"], t["team_name"].lower()))
+        rankings.append({"round_name": row_round, "teams": team_rows})
+
+    return {
+        "year": year,
+        "min_events": min_events,
+        "rankings": rankings,
+    }
+
+
+def print_round_strength_ranking(
+    year: int,
+    round_name: Optional[str] = None,
+    min_events: int = 2,
+    top: int = 10,
+    team_name: Optional[str] = None,
+    db_path: str = DB_PATH_DEFAULT,
+) -> None:
+    """Print league-wide team strength ranking per round."""
+    result = get_round_strength_ranking(
+        year=year,
+        round_name=round_name,
+        min_events=min_events,
+        db_path=db_path,
+    )
+
+    print(f"Round strength ranking {result['year']}")
+    print(f"Minimum events per team/round: {result['min_events']}")
+    selected_team = _canonical_team_name(team_name) if team_name else None
+    if selected_team is not None:
+        print(f"Team filter: {selected_team}")
+    print()
+
+    if not result["rankings"]:
+        print("No round data found for this year and filter.")
+        return
+
+    for block in result["rankings"]:
+        print(f"{block['round_name']}")
+        if not block["teams"]:
+            print("  No teams match the filter.")
+            print()
+            continue
+
+        if selected_team is not None:
+            selected_row = None
+            for pos, team in enumerate(block["teams"], start=1):
+                if team["team_name"].casefold() == selected_team.casefold():
+                    selected_row = (pos, team)
+                    break
+
+            if selected_row is None:
+                print("  Team not ranked in this round (filter/min-events).")
+                print()
+                continue
+
+            pos, team = selected_row
+            total_ranked = len(block["teams"])
+            print(f"{'Pos':>3}  {'Team':30}  {'Avg':>6}  {'Events':>6}  {'Best':>5}  {'Worst':>5}  {'Of':>4}")
+            print("""----  ------------------------------  ------  ------  -----  -----  ----""")
+            print(
+                f"{pos:>3}  {team['team_name'][:30]:30}  {team['avg_points']:>6.2f}  {team['events']:>6}  {team['best']:>5.1f}  {team['worst']:>5.1f}  {total_ranked:>4}"
+            )
+            print()
+            continue
+
+        print(f"{'Pos':>3}  {'Team':30}  {'Avg':>6}  {'Events':>6}  {'Best':>5}  {'Worst':>5}")
+        print("""----  ------------------------------  ------  ------  -----  -----""")
+        for pos, team in enumerate(block["teams"][:top], start=1):
+            print(
+                f"{pos:>3}  {team['team_name'][:30]:30}  {team['avg_points']:>6.2f}  {team['events']:>6}  {team['best']:>5.1f}  {team['worst']:>5.1f}"
+            )
+        print()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Print quiz event summaries and results from the SQLite database.")
     parser.add_argument("--db", default=DB_PATH_DEFAULT, help="Path to the SQLite database file.")
@@ -755,6 +1079,39 @@ if __name__ == "__main__":
     )
     difficulty_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
 
+    event_difficulty_parser = subparsers.add_parser(
+        "event-difficulty",
+        help="Compare round averages in one event against all other events in the same year.",
+    )
+    event_difficulty_parser.add_argument("--event-id", type=int, help="Event id to show.")
+    event_difficulty_parser.add_argument("--source-file", help="Source Excel filename of the event.")
+    event_difficulty_parser.add_argument("--date", dest="event_date", help="Event date in YYYY-MM-DD format.")
+    event_difficulty_parser.add_argument("--location", help="Event location string.")
+
+    round_strength_parser = subparsers.add_parser(
+        "round-strength",
+        help="League-wide ranking per round: best teams in Allgemeinwissen, Musik, etc.",
+    )
+    round_strength_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
+    round_strength_parser.add_argument("--round", dest="round_name", help="Optional single round name filter.")
+    round_strength_parser.add_argument(
+        "--min-events",
+        type=int,
+        default=2,
+        help="Minimum events per team in that round (default: 2).",
+    )
+    round_strength_parser.add_argument(
+        "--top",
+        type=int,
+        default=10,
+        help="How many teams to print per round (default: 10).",
+    )
+    round_strength_parser.add_argument(
+        "--team",
+        type=str,
+        help="Optional team name. If set, prints this team's rank in each round.",
+    )
+
     args = parser.parse_args()
     if args.command == "list":
         print_event_list(args.db)
@@ -776,3 +1133,20 @@ if __name__ == "__main__":
         print_consistency_report(args.year, args.min_events, args.db)
     elif args.command == "difficulty":
         print_round_difficulty_report(args.year, args.db)
+    elif args.command == "event-difficulty":
+        print_event_difficulty_report(
+            db_path=args.db,
+            event_id=args.event_id,
+            source_file=args.source_file,
+            event_date=args.event_date,
+            location=args.location,
+        )
+    elif args.command == "round-strength":
+        print_round_strength_ranking(
+            year=args.year,
+            round_name=args.round_name,
+            min_events=args.min_events,
+            top=args.top,
+            team_name=args.team,
+            db_path=args.db,
+        )

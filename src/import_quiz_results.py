@@ -56,6 +56,14 @@ def _is_bonus_cell(cell) -> bool:
     return rgb.upper().endswith("FBBF24")
 
 
+def _base_round_max_points(round_name: str) -> int:
+    if round_name == "Bilderrunde":
+        return 10
+    if round_name == "Interessantes":
+        return 6
+    return 5
+
+
 def create_schema(conn):
     conn.execute(
         """
@@ -159,13 +167,14 @@ def read_quiz_sheet(excel_path):
         if team_name is None or str(team_name).strip() == "":
             continue
 
-        bonus_round_number = None
+        bonus_round_numbers = []
         team = {
             "team_rank": normalize_int(row[rank_idx].value) if rank_idx is not None else None,
             "team_name": str(team_name).strip(),
             "puzzle_points": normalize_int(row[pp_idx].value) if pp_idx is not None else None,
             "total": normalize_int(row[total_idx].value) if total_idx is not None else None,
             "bonus_round": None,
+            "bonus_round_numbers": [],
             "scores": [],
         }
 
@@ -173,13 +182,17 @@ def read_quiz_sheet(excel_path):
             cell = row[idx]
             value = normalize_int(cell.value) if idx < len(row) else None
             if _is_bonus_cell(cell):
-                bonus_round_number = question_number
+                bonus_round_numbers.append(question_number)
             team["scores"].append((question_number, value))
 
-        team["bonus_round"] = bonus_round_number
+        team["bonus_round_numbers"] = bonus_round_numbers
         raw_teams.append(team)
 
-    bonus_rounds = {team["bonus_round"] for team in raw_teams if team["bonus_round"] is not None}
+    bonus_rounds = {
+        bonus_round
+        for team in raw_teams
+        for bonus_round in team["bonus_round_numbers"]
+    }
     if 3 in bonus_rounds and 7 in bonus_rounds:
         raise ValueError(
             "Invalid bonus-round data: both round 3 and round 7 are selected as bonus rounds in this quiz."
@@ -211,20 +224,53 @@ def read_quiz_sheet(excel_path):
     round_name_map = shifted_round_names if shifted_round_order else ROUND_NAMES
 
     teams = []
+    validation_errors = []
     for team in raw_teams:
+        team_bonus_round_numbers = team["bonus_round_numbers"]
+        if len(team_bonus_round_numbers) > 1:
+            selected = ", ".join(str(round_no) for round_no in sorted(team_bonus_round_numbers))
+            validation_errors.append(
+                f"Team '{team['team_name']}' selected more than one bonus round ({selected})."
+            )
+
+        bonus_round_number = team_bonus_round_numbers[0] if len(team_bonus_round_numbers) == 1 else None
         mapped_scores = []
         for question_number, points in team["scores"]:
             round_name = round_name_map.get(question_number, f"Round {question_number}")
             mapped_scores.append((round_name, points))
 
-        bonus_round_number = team["bonus_round"]
+            if points is None:
+                continue
+
+            is_bonus_round = bonus_round_number == question_number
+            base_max = _base_round_max_points(round_name)
+            allowed_max = base_max + (5 if is_bonus_round else 0)
+
+            if is_bonus_round and round_name == "Bilderrunde":
+                validation_errors.append(
+                    f"Team '{team['team_name']}' selected 'Bilderrunde' as bonus round, which is not allowed."
+                )
+
+            if points > allowed_max:
+                bonus_note = " (bonus round)" if is_bonus_round else ""
+                validation_errors.append(
+                    f"Team '{team['team_name']}' has {points} points in '{round_name}'{bonus_note}; maximum allowed is {allowed_max}."
+                )
+
         team["bonus_round"] = (
             round_name_map.get(bonus_round_number, f"Round {bonus_round_number}")
             if bonus_round_number is not None
             else None
         )
         team["scores"] = mapped_scores
+        team.pop("bonus_round_numbers", None)
         teams.append(team)
+
+    if validation_errors:
+        details = "\n".join(f"- {message}" for message in validation_errors)
+        raise ValueError(
+            f"Import validation failed for '{os.path.basename(excel_path)}':\n{details}"
+        )
 
     return teams
 
@@ -310,15 +356,26 @@ def import_quiz_folder(folder_path, db_path=DB_PATH_DEFAULT):
         raise ValueError(f"No Excel files found in folder: '{folder_path}'")
 
     imported = []
+    errors = []
     for excel_path in excel_files:
-        imported.append(import_quiz_file(excel_path, db_path))
+        try:
+            imported.append(import_quiz_file(excel_path, db_path))
+        except Exception as exc:
+            errors.append(
+                {
+                    "file": os.path.basename(excel_path),
+                    "message": str(exc),
+                }
+            )
 
     return {
         "folder": folder_path,
         "files_found": len(excel_files),
         "files_imported": len(imported),
+        "files_failed": len(errors),
         "database": db_path,
         "imports": imported,
+        "errors": errors,
     }
 
 
@@ -346,14 +403,33 @@ def main():
         summary = import_quiz_folder(args.folder, args.db)
         for result in summary["imports"]:
             print(f"Imported {result['teams_imported']} teams from {result['event_date']} @ {result['location']}")
+
+        if summary["errors"]:
+            print()
+            print("Errors during import:")
+            for error in summary["errors"]:
+                print(f"\n[{error['file']}]\n{error['message']}")
+
+        print()
         print(f"Imported {summary['files_imported']} files from {summary['folder']}")
+        if summary["files_failed"]:
+            print(f"Failed: {summary['files_failed']} files")
         print(f"Saved into {summary['database']}")
+
+        if summary["files_failed"]:
+            raise SystemExit(1)
         return
 
     if not args.excel_file:
         parser.error("Provide either 'excel_file' or '--folder'.")
 
-    result = import_quiz_file(args.excel_file, args.db)
+    try:
+        result = import_quiz_file(args.excel_file, args.db)
+    except Exception as exc:
+        print(f"Import failed for '{os.path.basename(args.excel_file)}':")
+        print(str(exc))
+        raise SystemExit(1)
+
     print(f"Imported {result['teams_imported']} teams from {result['event_date']} @ {result['location']}")
     print(f"Saved into {result['database']}")
 
