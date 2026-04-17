@@ -610,6 +610,105 @@ def print_consistency_report(year: int, min_events: int = 2, db_path: str = DB_P
         )
 
 
+def get_round_difficulty_report(year: int, db_path: str = DB_PATH_DEFAULT) -> Dict:
+    """Return round difficulty metrics for a given year.
+
+    Difficulty is measured by lower average points (harder rounds first).
+    Bonus-round points are normalized back to normal scoring before aggregation.
+    """
+    year_prefix = f"{year:04d}-%"
+    round_order = {name: idx for idx, name in ROUND_NAMES.items()}
+
+    with _connect(db_path) as conn:
+        events_count_row = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM quiz_events
+            WHERE event_date LIKE ?
+            """,
+            (year_prefix,),
+        ).fetchone()
+
+        rows = conn.execute(
+            """
+            SELECT
+                ts.round_name,
+                CASE
+                    WHEN ts.round_name = qt.bonus_round THEN
+                        CASE
+                            WHEN ts.points % 2 = 0 THEN ts.points / 2
+                            ELSE (ts.points - 1) / 2
+                        END
+                    ELSE ts.points
+                END AS adjusted_points
+            FROM team_scores ts
+            JOIN quiz_teams qt ON qt.id = ts.team_id
+            JOIN quiz_events e ON e.id = qt.event_id
+            WHERE e.event_date LIKE ?
+              AND ts.points IS NOT NULL
+            """,
+            (year_prefix,),
+        ).fetchall()
+
+    grouped: Dict[str, List[float]] = {}
+    for row in rows:
+        round_name = row["round_name"]
+        adjusted_points = float(row["adjusted_points"])
+        grouped.setdefault(round_name, []).append(adjusted_points)
+
+    rounds = []
+    for round_name, values in grouped.items():
+        count = len(values)
+        if count == 0:
+            continue
+
+        avg_points = sum(values) / count
+        variance = sum((x - avg_points) ** 2 for x in values) / count
+        stddev = variance ** 0.5
+
+        rounds.append(
+            {
+                "round_name": round_name,
+                "samples": count,
+                "avg_points": avg_points,
+                "stddev": stddev,
+                "min_points": min(values),
+                "max_points": max(values),
+            }
+        )
+
+    rounds.sort(key=lambda r: (r["avg_points"], round_order.get(r["round_name"], 999)))
+
+    return {
+        "year": year,
+        "events_count": events_count_row["c"] if events_count_row else 0,
+        "rounds_count": len(rounds),
+        "rounds": rounds,
+    }
+
+
+def print_round_difficulty_report(year: int, db_path: str = DB_PATH_DEFAULT) -> None:
+    """Print round difficulty report for a given year."""
+    result = get_round_difficulty_report(year=year, db_path=db_path)
+    rounds = result["rounds"]
+
+    print(f"Round difficulty report {result['year']}")
+    print(f"Events: {result['events_count']}")
+    print(f"Rounds: {result['rounds_count']}")
+    print()
+
+    if not rounds:
+        print("No round data found for this year.")
+        return
+
+    print(f"{'Pos':>3}  {'Round':20}  {'Avg':>6}  {'StdDev':>7}  {'Min':>4}  {'Max':>4}  {'Samples':>7}")
+    print("""----  --------------------  ------  -------  ----  ----  -------""")
+    for pos, row in enumerate(rounds, start=1):
+        print(
+            f"{pos:>3}  {row['round_name'][:20]:20}  {row['avg_points']:>6.2f}  {row['stddev']:>7.2f}  {row['min_points']:>4.1f}  {row['max_points']:>4.1f}  {row['samples']:>7}"
+        )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Print quiz event summaries and results from the SQLite database.")
     parser.add_argument("--db", default=DB_PATH_DEFAULT, help="Path to the SQLite database file.")
@@ -651,6 +750,11 @@ if __name__ == "__main__":
         help="Minimum events per team to include in consistency ranking (default: 2).",
     )
 
+    difficulty_parser = subparsers.add_parser(
+        "difficulty", help="Print round difficulty report for a given year."
+    )
+    difficulty_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
+
     args = parser.parse_args()
     if args.command == "list":
         print_event_list(args.db)
@@ -670,3 +774,5 @@ if __name__ == "__main__":
         print_team_round_averages(args.team, args.year, args.db)
     elif args.command == "consistency":
         print_consistency_report(args.year, args.min_events, args.db)
+    elif args.command == "difficulty":
+        print_round_difficulty_report(args.year, args.db)
