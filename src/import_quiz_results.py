@@ -245,17 +245,64 @@ def import_quiz_file(excel_path, db_path=DB_PATH_DEFAULT):
     }
 
 
+def import_quiz_folder(folder_path, db_path=DB_PATH_DEFAULT):
+    """Import all Excel quiz files from a folder into the database."""
+    if not os.path.isdir(folder_path):
+        raise ValueError(f"Folder does not exist: '{folder_path}'")
+
+    excel_extensions = (".xlsx", ".xlsm", ".xltx", ".xltm")
+    excel_files = [
+        os.path.join(folder_path, name)
+        for name in sorted(os.listdir(folder_path))
+        if name.lower().endswith(excel_extensions)
+    ]
+
+    if not excel_files:
+        raise ValueError(f"No Excel files found in folder: '{folder_path}'")
+
+    imported = []
+    for excel_path in excel_files:
+        imported.append(import_quiz_file(excel_path, db_path))
+
+    return {
+        "folder": folder_path,
+        "files_found": len(excel_files),
+        "files_imported": len(imported),
+        "database": db_path,
+        "imports": imported,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Import PubQuiz results from an Excel file into a SQLite database."
     )
-    parser.add_argument("excel_file", help="Path to the quiz result Excel file.")
+    parser.add_argument(
+        "excel_file",
+        nargs="?",
+        help="Path to a single quiz result Excel file.",
+    )
+    parser.add_argument(
+        "--folder",
+        help="Path to a folder containing quiz result Excel files to import.",
+    )
     parser.add_argument(
         "--db",
         default=DB_PATH_DEFAULT,
         help="Path to SQLite database file. Defaults to data/quiz_results.db.",
     )
     args = parser.parse_args()
+
+    if args.folder:
+        summary = import_quiz_folder(args.folder, args.db)
+        for result in summary["imports"]:
+            print(f"Imported {result['teams_imported']} teams from {result['event_date']} @ {result['location']}")
+        print(f"Imported {summary['files_imported']} files from {summary['folder']}")
+        print(f"Saved into {summary['database']}")
+        return
+
+    if not args.excel_file:
+        parser.error("Provide either 'excel_file' or '--folder'.")
 
     result = import_quiz_file(args.excel_file, args.db)
     print(f"Imported {result['teams_imported']} teams from {result['event_date']} @ {result['location']}")
