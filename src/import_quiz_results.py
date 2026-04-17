@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 
 from openpyxl import load_workbook
 
+from round_config import ROUND_NAMES
+
 DB_PATH_DEFAULT = os.path.join("data", "quiz_results.db")
 
 EVENT_FILE_PATTERN = re.compile(r"(?P<date>\d{8})_(?P<location>.+)\.(xlsx|xlsm|xltx|xltm)$")
@@ -97,7 +99,7 @@ def create_schema(conn):
             team_name TEXT NOT NULL,
             puzzle_points INTEGER,
             total INTEGER,
-            bonus_round INTEGER
+            bonus_round TEXT
         )
         """
     )
@@ -107,14 +109,14 @@ def create_schema(conn):
         conn.execute("ALTER TABLE quiz_teams RENAME COLUMN penalty_points TO puzzle_points")
         columns = [row[1] for row in conn.execute("PRAGMA table_info(quiz_teams)").fetchall()]
     if "bonus_round" not in columns:
-        conn.execute("ALTER TABLE quiz_teams ADD COLUMN bonus_round INTEGER")
+        conn.execute("ALTER TABLE quiz_teams ADD COLUMN bonus_round TEXT")
 
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS team_scores (
             id INTEGER PRIMARY KEY,
             team_id INTEGER NOT NULL REFERENCES quiz_teams(id),
-            question_index INTEGER NOT NULL,
+            round_name TEXT NOT NULL,
             points INTEGER
         )
         """
@@ -149,7 +151,7 @@ def read_quiz_sheet(excel_path):
         if isinstance(title, str) and title.isdigit():
             question_indices.append((idx, int(title)))
 
-    teams = []
+    raw_teams = []
     for row in rows[1:]:
         if row is None or len(row) <= teamname_idx:
             continue
@@ -157,7 +159,7 @@ def read_quiz_sheet(excel_path):
         if team_name is None or str(team_name).strip() == "":
             continue
 
-        bonus_round = None
+        bonus_round_number = None
         team = {
             "team_rank": normalize_int(row[rank_idx].value) if rank_idx is not None else None,
             "team_name": str(team_name).strip(),
@@ -171,10 +173,57 @@ def read_quiz_sheet(excel_path):
             cell = row[idx]
             value = normalize_int(cell.value) if idx < len(row) else None
             if _is_bonus_cell(cell):
-                bonus_round = question_number
+                bonus_round_number = question_number
             team["scores"].append((question_number, value))
 
-        team["bonus_round"] = bonus_round
+        team["bonus_round"] = bonus_round_number
+        raw_teams.append(team)
+
+    bonus_rounds = {team["bonus_round"] for team in raw_teams if team["bonus_round"] is not None}
+    if 3 in bonus_rounds and 7 in bonus_rounds:
+        raise ValueError(
+            "Invalid bonus-round data: both round 3 and round 7 are selected as bonus rounds in this quiz."
+        )
+
+    third_round_scores = []
+    for team in raw_teams:
+        for question_number, points in team["scores"]:
+            if question_number == 3 and points is not None:
+                third_round_scores.append(points)
+
+    has_third_round_bonus = 3 in bonus_rounds
+    has_high_score_in_round_3 = any(points > 5 for points in third_round_scores)
+    shifted_round_order = (not has_third_round_bonus) and has_high_score_in_round_3
+
+    shifted_round_names = {
+        1: ROUND_NAMES.get(1, "Round 1"),
+        2: ROUND_NAMES.get(2, "Round 2"),
+        3: ROUND_NAMES.get(7, "Round 7"),
+        4: ROUND_NAMES.get(3, "Round 3"),
+        5: ROUND_NAMES.get(4, "Round 4"),
+        6: ROUND_NAMES.get(5, "Round 5"),
+        7: ROUND_NAMES.get(6, "Round 6"),
+        8: ROUND_NAMES.get(8, "Round 8"),
+        9: ROUND_NAMES.get(9, "Round 9"),
+        10: ROUND_NAMES.get(10, "Round 10"),
+    }
+
+    round_name_map = shifted_round_names if shifted_round_order else ROUND_NAMES
+
+    teams = []
+    for team in raw_teams:
+        mapped_scores = []
+        for question_number, points in team["scores"]:
+            round_name = round_name_map.get(question_number, f"Round {question_number}")
+            mapped_scores.append((round_name, points))
+
+        bonus_round_number = team["bonus_round"]
+        team["bonus_round"] = (
+            round_name_map.get(bonus_round_number, f"Round {bonus_round_number}")
+            if bonus_round_number is not None
+            else None
+        )
+        team["scores"] = mapped_scores
         teams.append(team)
 
     return teams
@@ -228,10 +277,10 @@ def import_quiz_file(excel_path, db_path=DB_PATH_DEFAULT):
         )
         team_id = cur.lastrowid
 
-        for question_index, points in team["scores"]:
+        for question_number, points in team["scores"]:
             cur.execute(
-                "INSERT INTO team_scores (team_id, question_index, points) VALUES (?, ?, ?)",
-                (team_id, question_index, points),
+                "INSERT INTO team_scores (team_id, round_name, points) VALUES (?, ?, ?)",
+                (team_id, question_number, points),
             )
 
     conn.commit()

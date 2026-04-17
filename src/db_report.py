@@ -430,10 +430,10 @@ def get_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_DE
         round_data = conn.execute(
             f"""
             SELECT
-                ts.question_index,
+                ts.round_name,
                 AVG(
                     CASE 
-                        WHEN ts.question_index = qt.bonus_round AND ts.question_index IS NOT NULL THEN
+                        WHEN ts.round_name = qt.bonus_round THEN
                             CASE 
                                 WHEN ts.points % 2 = 0 THEN ts.points / 2
                                 ELSE (ts.points - 1) / 2
@@ -445,8 +445,21 @@ def get_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_DE
             FROM team_scores ts
             JOIN quiz_teams qt ON ts.team_id = qt.id
             WHERE ts.team_id IN ({placeholders})
-            GROUP BY ts.question_index
-            ORDER BY ts.question_index ASC
+            GROUP BY ts.round_name
+            ORDER BY 
+                CASE ts.round_name
+                    WHEN 'Allgemeinwissen' THEN 1
+                    WHEN 'Geographie' THEN 2
+                    WHEN 'Entertainment' THEN 3
+                    WHEN 'Sport' THEN 4
+                    WHEN 'Linz/OÖ' THEN 5
+                    WHEN 'Geschichte' THEN 6
+                    WHEN 'Bilderrunde' THEN 7
+                    WHEN 'Interessantes' THEN 8
+                    WHEN 'Überraschung' THEN 9
+                    WHEN 'Musik' THEN 10
+                    ELSE 999
+                END
             """,
             team_id_list,
         ).fetchall()
@@ -463,7 +476,7 @@ def get_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_DE
         
         round_averages = [
             {
-                "round": row["question_index"],
+                "round_name": row["round_name"],
                 "avg_points": row["avg_points"],
                 "appearances": row["appearances"],
             }
@@ -493,9 +506,8 @@ def print_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_
     print("""--------------------  -----------  ------""")
     
     for round_info in result["round_averages"]:
-        round_name = ROUND_NAMES.get(round_info['round'], f"Round {round_info['round']}")
         print(
-            f"{round_name:>20}  {round_info['avg_points']:>11.2f}  {round_info['appearances']:>6}"
+            f"{round_info['round_name']:>20}  {round_info['avg_points']:>11.2f}  {round_info['appearances']:>6}"
         )
     
     print("""--------------------  -----------  ------""")
