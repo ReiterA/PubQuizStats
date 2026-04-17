@@ -41,6 +41,19 @@ def normalize_int(value):
             return None
 
 
+def _is_bonus_cell(cell) -> bool:
+    font = getattr(cell, "font", None)
+    if font is None:
+        return False
+    color = getattr(font, "color", None)
+    if color is None:
+        return False
+    rgb = getattr(color, "rgb", None)
+    if not rgb:
+        return False
+    return rgb.upper().endswith("FBBF24")
+
+
 def create_schema(conn):
     conn.execute(
         """
@@ -83,7 +96,8 @@ def create_schema(conn):
             team_rank INTEGER,
             team_name TEXT NOT NULL,
             puzzle_points INTEGER,
-            total INTEGER
+            total INTEGER,
+            bonus_round INTEGER
         )
         """
     )
@@ -91,6 +105,9 @@ def create_schema(conn):
     columns = [row[1] for row in cursor.fetchall()]
     if "penalty_points" in columns and "puzzle_points" not in columns:
         conn.execute("ALTER TABLE quiz_teams RENAME COLUMN penalty_points TO puzzle_points")
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(quiz_teams)").fetchall()]
+    if "bonus_round" not in columns:
+        conn.execute("ALTER TABLE quiz_teams ADD COLUMN bonus_round INTEGER")
 
     conn.execute(
         """
@@ -109,11 +126,11 @@ def read_quiz_sheet(excel_path):
     workbook = load_workbook(filename=excel_path, data_only=True)
     worksheet = workbook.active
 
-    rows = list(worksheet.iter_rows(values_only=True))
+    rows = list(worksheet.iter_rows())
     if not rows:
         raise ValueError(f"Excel workbook '{excel_path}' is empty.")
 
-    header = [str(cell).strip() if cell is not None else None for cell in rows[0]]
+    header = [str(cell.value).strip() if cell.value is not None else None for cell in rows[0]]
     if "Teamname" not in header:
         raise ValueError(
             "Expected a header row containing 'Teamname'. "
@@ -129,32 +146,35 @@ def read_quiz_sheet(excel_path):
     for idx, title in enumerate(header):
         if title is None:
             continue
-        if title.isdigit():
+        if isinstance(title, str) and title.isdigit():
             question_indices.append((idx, int(title)))
 
     teams = []
     for row in rows[1:]:
         if row is None or len(row) <= teamname_idx:
             continue
-        team_name = row[teamname_idx]
+        team_name = row[teamname_idx].value
         if team_name is None or str(team_name).strip() == "":
             continue
 
+        bonus_round = None
         team = {
-            "team_rank": normalize_int(row[rank_idx]) if rank_idx is not None else None,
+            "team_rank": normalize_int(row[rank_idx].value) if rank_idx is not None else None,
             "team_name": str(team_name).strip(),
-            "puzzle_points": normalize_int(row[pp_idx]) if pp_idx is not None else None,
-            "total": normalize_int(row[total_idx]) if total_idx is not None else None,
+            "puzzle_points": normalize_int(row[pp_idx].value) if pp_idx is not None else None,
+            "total": normalize_int(row[total_idx].value) if total_idx is not None else None,
+            "bonus_round": None,
             "scores": [],
         }
 
         for idx, question_number in question_indices:
-            if idx >= len(row):
-                value = None
-            else:
-                value = normalize_int(row[idx])
+            cell = row[idx]
+            value = normalize_int(cell.value) if idx < len(row) else None
+            if _is_bonus_cell(cell):
+                bonus_round = question_number
             team["scores"].append((question_number, value))
 
+        team["bonus_round"] = bonus_round
         teams.append(team)
 
     return teams
@@ -196,13 +216,14 @@ def import_quiz_file(excel_path, db_path=DB_PATH_DEFAULT):
 
     for team in teams:
         cur.execute(
-            "INSERT INTO quiz_teams (event_id, team_rank, team_name, puzzle_points, total) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO quiz_teams (event_id, team_rank, team_name, puzzle_points, total, bonus_round) VALUES (?, ?, ?, ?, ?, ?)",
             (
                 event_id,
                 team["team_rank"],
                 team["team_name"],
                 team["puzzle_points"],
                 team["total"],
+                team["bonus_round"],
             ),
         )
         team_id = cur.lastrowid

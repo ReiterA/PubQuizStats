@@ -29,7 +29,14 @@ def get_event_list(db_path: str = DB_PATH_DEFAULT) -> List[Dict]:
                     WHERE event_id = e.id
                     ORDER BY COALESCE(team_rank, 9999), total DESC, puzzle_points DESC, team_name ASC
                     LIMIT 1
-                ) AS winner
+                ) AS winner,
+                (
+                    SELECT bonus_round
+                    FROM quiz_teams
+                    WHERE event_id = e.id
+                    ORDER BY COALESCE(team_rank, 9999), total DESC, puzzle_points DESC, team_name ASC
+                    LIMIT 1
+                ) AS winner_bonus
             FROM quiz_events e
             LEFT JOIN quiz_teams t ON t.event_id = e.id
             GROUP BY e.id
@@ -97,7 +104,7 @@ def get_event_result(
 
         teams = conn.execute(
             """
-            SELECT team_rank, team_name, total, puzzle_points
+            SELECT team_rank, team_name, total, puzzle_points, bonus_round
             FROM quiz_teams
             WHERE event_id = ?
             ORDER BY COALESCE(team_rank, 9999), total DESC, puzzle_points DESC, team_name ASC
@@ -117,11 +124,12 @@ def print_event_list(db_path: str = DB_PATH_DEFAULT) -> None:
         print("No imported quiz events found.")
         return
 
-    print(f"{'ID':>3}  {'Date':10}  {'Location':20}  {'Teams':>5}  {'Winner'}")
-    print("""----  ----------  --------------------  -----  ------------------------------""")
+    print(f"{'ID':>3}  {'Date':10}  {'Location':20}  {'Teams':>5}  {'Winner':25}  {'Bonus'}")
+    print("""----  ----------  --------------------  -----  -------------------------  -----""")
     for event in events:
+        bonus = event.get('winner_bonus')
         print(
-            f"{event['id']:>3}  {event['event_date']:10}  {event['location'][:20]:20}  {event['team_count']:>5}  {event['winner'] or 'N/A'}"
+            f"{event['id']:>3}  {event['event_date']:10}  {event['location'][:20]:20}  {event['team_count']:>5}  {event['winner'][:25] if event['winner'] else 'N/A':25}  {str(bonus) if bonus is not None else '':>5}"
         )
 
 
@@ -151,11 +159,13 @@ def print_event_results(
         print("No teams recorded for this event.")
         return
 
-    print(f"{'Pos':>3}  {'Team':30}  {'Total':>5}  {'PP':>4}")
-    print("""----  ------------------------------  -----  ----""")
+    print(f"{'Pos':>3}  {'Team':30}  {'Total':>5}  {'PP':>4}  {'Bonus'}")
+    print("""----  ------------------------------  -----  ----  -----""")
     for position, team in enumerate(teams, start=1):
+        bonus_round = team.get('bonus_round')
+        bonus_text = str(bonus_round) if bonus_round is not None else ''
         print(
-            f"{position:>3}  {team['team_name'][:30]:30}  {team['total'] or 0:>5}  {team['puzzle_points'] if team['puzzle_points'] is not None else '':>4}"
+            f"{position:>3}  {team['team_name'][:30]:30}  {team['total'] or 0:>5}  {team['puzzle_points'] if team['puzzle_points'] is not None else '':>4}  {bonus_text:>5}"
         )
 
 
