@@ -163,9 +163,12 @@ def get_championship_standings(year: int, db_path: str = DB_PATH_DEFAULT) -> Dic
                         "team_name": team_name,
                         "points": 0,
                         "events_count": 0,
+                        "wins": 0,
                     }
                 standings[team_name]["points"] += points
                 standings[team_name]["events_count"] += 1
+                if rank == 1:
+                    standings[team_name]["wins"] += 1
 
         sorted_standings = sorted(
             standings.values(),
@@ -193,11 +196,26 @@ def print_championship_standings(year: int, db_path: str = DB_PATH_DEFAULT) -> N
         print("No events found for this year.")
         return
 
-    print(f"{'Pos':>3}  {'Team':30}  {'Points':>6}  {'Events':>6}")
-    print("""----  ------------------------------  ------  ------""")
-    for pos, team in enumerate(standings, start=1):
+    print(f"{'Pos':>3}  {'Team':30}  {'Points':>6}  {'Events':>6}  {'Wins':>5}")
+    print("""----  ------------------------------  ------  ------  -----""")
+    
+    pos = 1
+    for idx, team in enumerate(standings):
+        # Check if this team is tied with the previous one
+        if idx > 0:
+            prev_team = standings[idx - 1]
+            if team['points'] == prev_team['points']:
+                # Same points: use same position
+                display_pos = pos
+            else:
+                # Different points: advance position to next available
+                pos = idx + 1
+                display_pos = pos
+        else:
+            display_pos = pos
+        
         print(
-            f"{pos:>3}  {team['team_name'][:30]:30}  {team['points']:>6}  {team['events_count']:>6}"
+            f"{display_pos:>3}  {team['team_name'][:30]:30}  {team['points']:>6}  {team['events_count']:>6}  {team['wins']:>5}"
         )
 
 
