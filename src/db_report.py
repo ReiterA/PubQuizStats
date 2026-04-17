@@ -425,18 +425,28 @@ def get_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_DE
                 "puzzle_average": None,
             }
         
-        # Get average points per question
+        # Get average points per question, adjusting for bonus rounds
         placeholders = ",".join("?" * len(team_id_list))
         round_data = conn.execute(
             f"""
             SELECT
-                question_index,
-                AVG(points) as avg_points,
+                ts.question_index,
+                AVG(
+                    CASE 
+                        WHEN ts.question_index = qt.bonus_round AND ts.question_index IS NOT NULL THEN
+                            CASE 
+                                WHEN ts.points % 2 = 0 THEN ts.points / 2
+                                ELSE (ts.points - 1) / 2
+                            END
+                        ELSE ts.points
+                    END
+                ) as avg_points,
                 COUNT(*) as appearances
-            FROM team_scores
-            WHERE team_id IN ({placeholders})
-            GROUP BY question_index
-            ORDER BY question_index ASC
+            FROM team_scores ts
+            JOIN quiz_teams qt ON ts.team_id = qt.id
+            WHERE ts.team_id IN ({placeholders})
+            GROUP BY ts.question_index
+            ORDER BY ts.question_index ASC
             """,
             team_id_list,
         ).fetchall()
