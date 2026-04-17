@@ -3,6 +3,8 @@ import os
 import sqlite3
 from typing import Dict, List, Optional
 
+from championship_config import CHAMPIONSHIP_POINTS_BY_POSITION
+
 DB_PATH_DEFAULT = os.path.join("data", "quiz_results.db")
 
 
@@ -118,6 +120,79 @@ def get_event_result(
         }
 
 
+def get_championship_standings(year: int, db_path: str = DB_PATH_DEFAULT) -> Dict:
+    """Return championship standings for the given year."""
+    year_prefix = f"{year:04d}-%"
+    with _connect(db_path) as conn:
+        events = conn.execute(
+            """
+            SELECT id, event_date, location
+            FROM quiz_events
+            WHERE event_date LIKE ?
+            ORDER BY event_date ASC, location ASC
+            """,
+            (year_prefix,),
+        ).fetchall()
+
+        standings: Dict[str, Dict] = {}
+        for event in events:
+            rows = conn.execute(
+                """
+                SELECT team_name, team_rank
+                FROM quiz_teams
+                WHERE event_id = ?
+                ORDER BY COALESCE(team_rank, 9999), total DESC, puzzle_points DESC, team_name ASC
+                """,
+                (event["id"],),
+            ).fetchall()
+
+            for fallback_pos, row in enumerate(rows, start=1):
+                rank = row["team_rank"] if row["team_rank"] is not None else fallback_pos
+                points = CHAMPIONSHIP_POINTS_BY_POSITION.get(rank, 0)
+                team_name = row["team_name"]
+                if team_name not in standings:
+                    standings[team_name] = {
+                        "team_name": team_name,
+                        "points": 0,
+                        "events_count": 0,
+                    }
+                standings[team_name]["points"] += points
+                standings[team_name]["events_count"] += 1
+
+        sorted_standings = sorted(
+            standings.values(),
+            key=lambda s: (-s["points"], -s["events_count"], s["team_name"].lower()),
+        )
+
+        return {
+            "year": year,
+            "events_count": len(events),
+            "teams_count": len(sorted_standings),
+            "standings": sorted_standings,
+        }
+
+
+def print_championship_standings(year: int, db_path: str = DB_PATH_DEFAULT) -> None:
+    result = get_championship_standings(year, db_path)
+    standings = result["standings"]
+
+    print(f"Championship standings {result['year']}")
+    print(f"Events: {result['events_count']}")
+    print(f"Teams: {result['teams_count']}")
+    print()
+
+    if not standings:
+        print("No events found for this year.")
+        return
+
+    print(f"{'Pos':>3}  {'Team':30}  {'Points':>6}  {'Events':>6}")
+    print("""----  ------------------------------  ------  ------""")
+    for pos, team in enumerate(standings, start=1):
+        print(
+            f"{pos:>3}  {team['team_name'][:30]:30}  {team['points']:>6}  {team['events_count']:>6}"
+        )
+
+
 def print_event_list(db_path: str = DB_PATH_DEFAULT) -> None:
     events = get_event_list(db_path)
     if not events:
@@ -182,6 +257,11 @@ if __name__ == "__main__":
     result_parser.add_argument("--date", dest="event_date", help="Event date in YYYY-MM-DD format.")
     result_parser.add_argument("--location", help="Event location string.")
 
+    standings_parser = subparsers.add_parser(
+        "standings", help="Print championship standings for a given year."
+    )
+    standings_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
+
     args = parser.parse_args()
     if args.command == "list":
         print_event_list(args.db)
@@ -193,3 +273,5 @@ if __name__ == "__main__":
             event_date=args.event_date,
             location=args.location,
         )
+    elif args.command == "standings":
+        print_championship_standings(args.year, args.db)
