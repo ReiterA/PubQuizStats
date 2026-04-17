@@ -53,6 +53,28 @@ def create_schema(conn):
         )
         """
     )
+    duplicates = []
+    rows = conn.execute(
+        "SELECT source_file, id FROM quiz_events ORDER BY source_file, imported_at DESC, id DESC"
+    ).fetchall()
+    seen = set()
+    for source_file, event_id in rows:
+        if source_file in seen:
+            duplicates.append(event_id)
+        else:
+            seen.add(source_file)
+
+    for event_id in duplicates:
+        conn.execute(
+            "DELETE FROM team_scores WHERE team_id IN (SELECT id FROM quiz_teams WHERE event_id = ?)",
+            (event_id,),
+        )
+        conn.execute("DELETE FROM quiz_teams WHERE event_id = ?", (event_id,))
+        conn.execute("DELETE FROM quiz_events WHERE id = ?", (event_id,))
+
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_quiz_events_source_file ON quiz_events(source_file)"
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS quiz_teams (
@@ -60,11 +82,16 @@ def create_schema(conn):
             event_id INTEGER NOT NULL REFERENCES quiz_events(id),
             team_rank INTEGER,
             team_name TEXT NOT NULL,
-            penalty_points INTEGER,
+            puzzle_points INTEGER,
             total INTEGER
         )
         """
     )
+    cursor = conn.execute("PRAGMA table_info(quiz_teams)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "penalty_points" in columns and "puzzle_points" not in columns:
+        conn.execute("ALTER TABLE quiz_teams RENAME COLUMN penalty_points TO puzzle_points")
+
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS team_scores (
@@ -116,7 +143,7 @@ def read_quiz_sheet(excel_path):
         team = {
             "team_rank": normalize_int(row[rank_idx]) if rank_idx is not None else None,
             "team_name": str(team_name).strip(),
-            "penalty_points": normalize_int(row[pp_idx]) if pp_idx is not None else None,
+            "puzzle_points": normalize_int(row[pp_idx]) if pp_idx is not None else None,
             "total": normalize_int(row[total_idx]) if total_idx is not None else None,
             "scores": [],
         }
@@ -143,20 +170,38 @@ def import_quiz_file(excel_path, db_path=DB_PATH_DEFAULT):
 
     imported_at = datetime.now(timezone.utc).isoformat()
     cur = conn.cursor()
+    source_file = os.path.basename(excel_path)
     cur.execute(
-        "INSERT INTO quiz_events (event_date, location, source_file, imported_at) VALUES (?, ?, ?, ?)",
-        (event_date, location, os.path.basename(excel_path), imported_at),
+        "SELECT id FROM quiz_events WHERE source_file = ?",
+        (source_file,),
     )
-    event_id = cur.lastrowid
+    row = cur.fetchone()
+    if row is not None:
+        event_id = row[0]
+        cur.execute(
+            "DELETE FROM team_scores WHERE team_id IN (SELECT id FROM quiz_teams WHERE event_id = ?)",
+            (event_id,),
+        )
+        cur.execute("DELETE FROM quiz_teams WHERE event_id = ?", (event_id,))
+        cur.execute(
+            "UPDATE quiz_events SET event_date = ?, location = ?, imported_at = ? WHERE id = ?",
+            (event_date, location, imported_at, event_id),
+        )
+    else:
+        cur.execute(
+            "INSERT INTO quiz_events (event_date, location, source_file, imported_at) VALUES (?, ?, ?, ?)",
+            (event_date, location, source_file, imported_at),
+        )
+        event_id = cur.lastrowid
 
     for team in teams:
         cur.execute(
-            "INSERT INTO quiz_teams (event_id, team_rank, team_name, penalty_points, total) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO quiz_teams (event_id, team_rank, team_name, puzzle_points, total) VALUES (?, ?, ?, ?, ?)",
             (
                 event_id,
                 team["team_rank"],
                 team["team_name"],
-                team["penalty_points"],
+                team["puzzle_points"],
                 team["total"],
             ),
         )
