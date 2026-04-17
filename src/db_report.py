@@ -515,6 +515,101 @@ def print_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_
         print(f"Puzzle average: {result['puzzle_average']:.2f}")
 
 
+def get_consistency_report(year: int, min_events: int = 2, db_path: str = DB_PATH_DEFAULT) -> Dict:
+    """Return team consistency metrics for a given year.
+
+    Consistency is measured via standard deviation of event totals.
+    Lower stddev means more consistent performance.
+    """
+    year_prefix = f"{year:04d}-%"
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                e.id AS event_id,
+                t.team_name,
+                t.total
+            FROM quiz_events e
+            JOIN quiz_teams t ON t.event_id = e.id
+            WHERE e.event_date LIKE ?
+            ORDER BY e.event_date ASC, e.location ASC
+            """,
+            (year_prefix,),
+        ).fetchall()
+
+    by_team: Dict[str, Dict[int, int]] = {}
+    for row in rows:
+        canonical = _canonical_team_name(row["team_name"])
+        event_id = row["event_id"]
+        total = row["total"] if row["total"] is not None else 0
+        if canonical not in by_team:
+            by_team[canonical] = {}
+
+        # If aliases accidentally appear twice in one event, keep the higher total.
+        previous = by_team[canonical].get(event_id)
+        if previous is None or total > previous:
+            by_team[canonical][event_id] = total
+
+    standings = []
+    for team_name, event_totals_map in by_team.items():
+        totals = list(event_totals_map.values())
+        events_count = len(totals)
+        if events_count < min_events:
+            continue
+
+        avg_points = sum(totals) / events_count
+        variance = sum((x - avg_points) ** 2 for x in totals) / events_count
+        stddev = variance ** 0.5
+        cv = (stddev / avg_points * 100) if avg_points > 0 else 0.0
+
+        standings.append(
+            {
+                "team_name": team_name,
+                "events": events_count,
+                "avg_points": avg_points,
+                "stddev": stddev,
+                "cv_percent": cv,
+                "min_points": min(totals),
+                "max_points": max(totals),
+            }
+        )
+
+    standings.sort(key=lambda s: (-s["avg_points"], s["stddev"], s["team_name"].lower()))
+
+    return {
+        "year": year,
+        "min_events": min_events,
+        "teams_count": len(standings),
+        "standings": standings,
+    }
+
+
+def print_consistency_report(year: int, min_events: int = 2, db_path: str = DB_PATH_DEFAULT) -> None:
+    """Print team consistency report for a given year."""
+    result = get_consistency_report(year=year, min_events=min_events, db_path=db_path)
+    standings = result["standings"]
+
+    print(f"Consistency report {result['year']}")
+    print(f"Minimum events: {result['min_events']}")
+    print(f"Teams: {result['teams_count']}")
+    print()
+
+    if not standings:
+        print("No teams found for this year and filter.")
+        return
+
+    print(
+        f"{'Pos':>3}  {'Team':30}  {'Events':>6}  {'Avg':>6}  {'StdDev':>7}  {'CV%':>6}  {'Min':>4}  {'Max':>4}"
+    )
+    print("""----  ------------------------------  ------  ------  -------  ------  ----  ----""")
+
+    for pos, team in enumerate(standings, start=1):
+        print(
+            f"{pos:>3}  {team['team_name'][:30]:30}  {team['events']:>6}  {team['avg_points']:>6.2f}  {team['stddev']:>7.2f}  {team['cv_percent']:>6.2f}  {team['min_points']:>4}  {team['max_points']:>4}"
+        )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Print quiz event summaries and results from the SQLite database.")
     parser.add_argument("--db", default=DB_PATH_DEFAULT, help="Path to the SQLite database file.")
@@ -545,6 +640,17 @@ if __name__ == "__main__":
     averages_parser.add_argument("--team", type=str, required=True, help="Team name to show.")
     averages_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
 
+    consistency_parser = subparsers.add_parser(
+        "consistency", help="Print team consistency report for a given year."
+    )
+    consistency_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
+    consistency_parser.add_argument(
+        "--min-events",
+        type=int,
+        default=2,
+        help="Minimum events per team to include in consistency ranking (default: 2).",
+    )
+
     args = parser.parse_args()
     if args.command == "list":
         print_event_list(args.db)
@@ -562,3 +668,5 @@ if __name__ == "__main__":
         print_team_season_results(args.team, args.year, args.db)
     elif args.command == "averages":
         print_team_round_averages(args.team, args.year, args.db)
+    elif args.command == "consistency":
+        print_consistency_report(args.year, args.min_events, args.db)
