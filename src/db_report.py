@@ -270,6 +270,100 @@ def print_event_results(
         )
 
 
+def get_team_season_results(team_name: str, year: int, db_path: str = DB_PATH_DEFAULT) -> Dict:
+    """Return all events and results for a team in a given year."""
+    canonical_team = _canonical_team_name(team_name)
+    year_prefix = f"{year:04d}-%"
+    
+    with _connect(db_path) as conn:
+        results = conn.execute(
+            """
+            SELECT
+                e.id,
+                e.event_date,
+                e.location,
+                t.team_rank,
+                t.bonus_round
+            FROM quiz_events e
+            JOIN quiz_teams t ON e.id = t.event_id
+            WHERE e.event_date LIKE ?
+            AND LOWER(TRIM(t.team_name)) = LOWER(TRIM(?))
+            ORDER BY e.event_date ASC, e.location ASC
+            """,
+            (year_prefix, team_name),
+        ).fetchall()
+        
+        # If no results with exact name match, try with canonical name
+        if not results:
+            # Get all teams for this year and check canonical names
+            all_teams = conn.execute(
+                """
+                SELECT DISTINCT
+                    e.id,
+                    e.event_date,
+                    e.location,
+                    t.team_name,
+                    t.team_rank,
+                    t.bonus_round
+                FROM quiz_events e
+                JOIN quiz_teams t ON e.id = t.event_id
+                WHERE e.event_date LIKE ?
+                ORDER BY e.event_date ASC, e.location ASC
+                """,
+                (year_prefix,),
+            ).fetchall()
+            
+            results = [
+                row for row in all_teams
+                if _canonical_team_name(row["team_name"]) == canonical_team
+            ]
+        
+        events_data = []
+        for row in results:
+            rank = row["team_rank"] if row["team_rank"] is not None else None
+            points = CHAMPIONSHIP_POINTS_BY_POSITION.get(rank, 0) if rank else 0
+            events_data.append({
+                "event_date": row["event_date"],
+                "location": row["location"],
+                "position": rank,
+                "points": points,
+                "bonus_round": row["bonus_round"],
+            })
+        
+        return {
+            "team_name": canonical_team,
+            "year": year,
+            "events": events_data,
+        }
+
+
+def print_team_season_results(team_name: str, year: int, db_path: str = DB_PATH_DEFAULT) -> None:
+    """Print season results for a team in a given year."""
+    result = get_team_season_results(team_name, year, db_path)
+    
+    print(f"Season results for {result['team_name']} ({result['year']})")
+    print()
+    
+    if not result["events"]:
+        print("No events found for this team in this year.")
+        return
+    
+    print(f"{'Date':10}  {'Location':20}  {'Pos':>3}  {'Points':>6}  {'Bonus'}")
+    print("""----------  --------------------  ---  ------  -----""")
+    
+    total_points = 0
+    for event in result["events"]:
+        bonus_text = str(event['bonus_round']) if event['bonus_round'] is not None else ''
+        pos_text = str(event['position']) if event['position'] is not None else '-'
+        print(
+            f"{event['event_date']:10}  {event['location'][:20]:20}  {pos_text:>3}  {event['points']:>6}  {bonus_text:>5}"
+        )
+        total_points += event['points']
+    
+    print("""----------  --------------------  ---  ------  -----""")
+    print(f"{'Total':>34}  {total_points:>6}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Print quiz event summaries and results from the SQLite database.")
     parser.add_argument("--db", default=DB_PATH_DEFAULT, help="Path to the SQLite database file.")
@@ -288,6 +382,12 @@ if __name__ == "__main__":
     )
     standings_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
 
+    team_parser = subparsers.add_parser(
+        "team", help="Print season results for a team in a given year."
+    )
+    team_parser.add_argument("--team", type=str, required=True, help="Team name to show.")
+    team_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
+
     args = parser.parse_args()
     if args.command == "list":
         print_event_list(args.db)
@@ -301,3 +401,5 @@ if __name__ == "__main__":
         )
     elif args.command == "standings":
         print_championship_standings(args.year, args.db)
+    elif args.command == "team":
+        print_team_season_results(args.team, args.year, args.db)
