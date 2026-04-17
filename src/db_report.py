@@ -4,6 +4,7 @@ import sqlite3
 from typing import Dict, List, Optional
 
 from championship_config import CHAMPIONSHIP_POINTS_BY_POSITION
+from round_config import ROUND_NAMES
 from team_aliases import TEAM_NAME_ALIASES
 
 DB_PATH_DEFAULT = os.path.join("data", "quiz_results.db")
@@ -452,7 +453,7 @@ def get_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_DE
         
         round_averages = [
             {
-                "round": row["question_index"] + 1,
+                "round": row["question_index"],
                 "avg_points": row["avg_points"],
                 "appearances": row["appearances"],
             }
@@ -478,15 +479,16 @@ def print_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_
         print("No data found for this team in this year.")
         return
     
-    print(f"{'Round':>5}  {'Avg Points':>11}  {'Events'}")
-    print("""-----  -----------  ------""")
+    print(f"{'Round':>20}  {'Avg Points':>11}  {'Events'}")
+    print("""--------------------  -----------  ------""")
     
     for round_info in result["round_averages"]:
+        round_name = ROUND_NAMES.get(round_info['round'], f"Round {round_info['round']}")
         print(
-            f"{round_info['round']:>5}  {round_info['avg_points']:>11.2f}  {round_info['appearances']:>6}"
+            f"{round_name:>20}  {round_info['avg_points']:>11.2f}  {round_info['appearances']:>6}"
         )
     
-    print("""-----  -----------  ------""")
+    print("""--------------------  -----------  ------""")
     if result["puzzle_average"] is not None:
         print(f"Puzzle average: {result['puzzle_average']:.2f}")
 
