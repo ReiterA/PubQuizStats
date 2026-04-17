@@ -283,6 +283,7 @@ def get_team_season_results(team_name: str, year: int, db_path: str = DB_PATH_DE
                 e.event_date,
                 e.location,
                 t.team_rank,
+                t.total,
                 t.bonus_round
             FROM quiz_events e
             JOIN quiz_teams t ON e.id = t.event_id
@@ -304,6 +305,7 @@ def get_team_season_results(team_name: str, year: int, db_path: str = DB_PATH_DE
                     e.location,
                     t.team_name,
                     t.team_rank,
+                    t.total,
                     t.bonus_round
                 FROM quiz_events e
                 JOIN quiz_teams t ON e.id = t.event_id
@@ -321,12 +323,11 @@ def get_team_season_results(team_name: str, year: int, db_path: str = DB_PATH_DE
         events_data = []
         for row in results:
             rank = row["team_rank"] if row["team_rank"] is not None else None
-            points = CHAMPIONSHIP_POINTS_BY_POSITION.get(rank, 0) if rank else 0
             events_data.append({
                 "event_date": row["event_date"],
                 "location": row["location"],
                 "position": rank,
-                "points": points,
+                "total_points": row["total"],
                 "bonus_round": row["bonus_round"],
             })
         
@@ -356,9 +357,9 @@ def print_team_season_results(team_name: str, year: int, db_path: str = DB_PATH_
         bonus_text = str(event['bonus_round']) if event['bonus_round'] is not None else ''
         pos_text = str(event['position']) if event['position'] is not None else '-'
         print(
-            f"{event['event_date']:10}  {event['location'][:20]:20}  {pos_text:>3}  {event['points']:>6}  {bonus_text:>5}"
+            f"{event['event_date']:10}  {event['location'][:20]:20}  {pos_text:>3}  {event['total_points']:>6}  {bonus_text:>5}"
         )
-        total_points += event['points']
+        total_points += event['total_points']
     
     print("""----------  --------------------  ---  ------  -----""")
     print(f"{'Total':>34}  {total_points:>6}")
