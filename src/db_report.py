@@ -197,7 +197,7 @@ def print_championship_standings(year: int, db_path: str = DB_PATH_DEFAULT) -> N
         print("No events found for this year.")
         return
 
-    print(f"{'Pos':>3}  {'Team':30}  {'Points':>6}  {'Events':>6}  {'Wins':>5}")
+    print(f"{'Pos':>4}  {'Team':30}  {'Points':>6}  {'Events':>6}  {'Wins':>5}")
     print("""----  ------------------------------  ------  ------  -----""")
     
     pos = 1
@@ -216,7 +216,7 @@ def print_championship_standings(year: int, db_path: str = DB_PATH_DEFAULT) -> N
             display_pos = pos
         
         print(
-            f"{display_pos:>3}  {team['team_name'][:30]:30}  {team['points']:>6}  {team['events_count']:>6}  {team['wins']:>5}"
+            f"{display_pos:>4}  {team['team_name'][:30]:30}  {team['points']:>6}  {team['events_count']:>6}  {team['wins']:>5}"
         )
 
 
@@ -226,12 +226,12 @@ def print_event_list(db_path: str = DB_PATH_DEFAULT) -> None:
         print("No imported quiz events found.")
         return
 
-    print(f"{'ID':>3}  {'Date':10}  {'Location':20}  {'Teams':>5}  {'Winner':25}  {'Bonus'}")
+    print(f"{'ID':>4}  {'Date':10}  {'Location':20}  {'Teams':>5}  {'Winner':25}  {'Bonus'}")
     print("""----  ----------  --------------------  -----  -------------------------  -----""")
     for event in events:
         bonus = event.get('winner_bonus')
         print(
-            f"{event['id']:>3}  {event['event_date']:10}  {event['location'][:20]:20}  {event['team_count']:>5}  {event['winner'][:25] if event['winner'] else 'N/A':25}  {str(bonus) if bonus is not None else '':>5}"
+            f"{event['id']:>4}  {event['event_date']:10}  {event['location'][:20]:20}  {event['team_count']:>5}  {event['winner'][:25] if event['winner'] else 'N/A':25}  {str(bonus) if bonus is not None else '':>5}"
         )
 
 
@@ -261,13 +261,13 @@ def print_event_results(
         print("No teams recorded for this event.")
         return
 
-    print(f"{'Pos':>3}  {'Team':30}  {'Total':>5}  {'PP':>4}  {'Bonus'}")
+    print(f"{'Pos':>4}  {'Team':30}  {'Total':>5}  {'PP':>4}  {'Bonus'}")
     print("""----  ------------------------------  -----  ----  -----""")
     for position, team in enumerate(teams, start=1):
         bonus_round = team.get('bonus_round')
         bonus_text = str(bonus_round) if bonus_round is not None else ''
         print(
-            f"{position:>3}  {team['team_name'][:30]:30}  {team['total'] or 0:>5}  {team['puzzle_points'] if team['puzzle_points'] is not None else '':>4}  {bonus_text:>5}"
+            f"{position:>4}  {team['team_name'][:30]:30}  {team['total'] or 0:>5}  {team['puzzle_points'] if team['puzzle_points'] is not None else '':>4}  {bonus_text:>5}"
         )
 
 
@@ -600,13 +600,13 @@ def print_consistency_report(year: int, min_events: int = 2, db_path: str = DB_P
         return
 
     print(
-        f"{'Pos':>3}  {'Team':30}  {'Events':>6}  {'Avg':>6}  {'StdDev':>7}  {'CV%':>6}  {'Min':>4}  {'Max':>4}"
+        f"{'Pos':>4}  {'Team':30}  {'Events':>6}  {'Avg':>6}  {'StdDev':>7}  {'CV%':>6}  {'Min':>4}  {'Max':>4}"
     )
     print("""----  ------------------------------  ------  ------  -------  ------  ----  ----""")
 
     for pos, team in enumerate(standings, start=1):
         print(
-            f"{pos:>3}  {team['team_name'][:30]:30}  {team['events']:>6}  {team['avg_points']:>6.2f}  {team['stddev']:>7.2f}  {team['cv_percent']:>6.2f}  {team['min_points']:>4}  {team['max_points']:>4}"
+            f"{pos:>4}  {team['team_name'][:30]:30}  {team['events']:>6}  {team['avg_points']:>6.2f}  {team['stddev']:>7.2f}  {team['cv_percent']:>6.2f}  {team['min_points']:>4}  {team['max_points']:>4}"
         )
 
 
@@ -713,11 +713,11 @@ def print_round_difficulty_report(year: int, db_path: str = DB_PATH_DEFAULT) -> 
         print("No round data found for this year.")
         return
 
-    print(f"{'Pos':>3}  {'Round':20}  {'Avg':>6}  {'StdDev':>7}  {'Min':>4}  {'Max':>4}  {'Samples':>7}")
+    print(f"{'Pos':>4}  {'Round':20}  {'Avg':>6}  {'StdDev':>7}  {'Min':>4}  {'Max':>4}  {'Samples':>7}")
     print("""----  --------------------  ------  -------  ----  ----  -------""")
     for pos, row in enumerate(rounds, start=1):
         print(
-            f"{pos:>3}  {row['round_name'][:20]:20}  {row['avg_points']:>6.2f}  {row['stddev']:>7.2f}  {row['min_points']:>4.1f}  {row['max_points']:>4.1f}  {row['samples']:>7}"
+            f"{pos:>4}  {row['round_name'][:20]:20}  {row['avg_points']:>6.2f}  {row['stddev']:>7.2f}  {row['min_points']:>4.1f}  {row['max_points']:>4.1f}  {row['samples']:>7}"
         )
 
 
@@ -1016,19 +1016,19 @@ def print_round_strength_ranking(
 
             pos, team = selected_row
             total_ranked = len(block["teams"])
-            print(f"{'Pos':>3}  {'Team':30}  {'Avg':>6}  {'Events':>6}  {'Best':>5}  {'Worst':>5}  {'Of':>4}")
+            print(f"{'Pos':>4}  {'Team':30}  {'Avg':>6}  {'Events':>6}  {'Best':>5}  {'Worst':>5}  {'Of':>4}")
             print("""----  ------------------------------  ------  ------  -----  -----  ----""")
             print(
-                f"{pos:>3}  {team['team_name'][:30]:30}  {team['avg_points']:>6.2f}  {team['events']:>6}  {team['best']:>5.1f}  {team['worst']:>5.1f}  {total_ranked:>4}"
+                f"{pos:>4}  {team['team_name'][:30]:30}  {team['avg_points']:>6.2f}  {team['events']:>6}  {team['best']:>5.1f}  {team['worst']:>5.1f}  {total_ranked:>4}"
             )
             print()
             continue
 
-        print(f"{'Pos':>3}  {'Team':30}  {'Avg':>6}  {'Events':>6}  {'Best':>5}  {'Worst':>5}")
+        print(f"{'Pos':>4}  {'Team':30}  {'Avg':>6}  {'Events':>6}  {'Best':>5}  {'Worst':>5}")
         print("""----  ------------------------------  ------  ------  -----  -----""")
         for pos, team in enumerate(block["teams"][:top], start=1):
             print(
-                f"{pos:>3}  {team['team_name'][:30]:30}  {team['avg_points']:>6.2f}  {team['events']:>6}  {team['best']:>5.1f}  {team['worst']:>5.1f}"
+                f"{pos:>4}  {team['team_name'][:30]:30}  {team['avg_points']:>6.2f}  {team['events']:>6}  {team['best']:>5.1f}  {team['worst']:>5.1f}"
             )
         print()
 
