@@ -759,12 +759,16 @@ def get_team_profile_report(
         "team_name": season_result["team_name"],
         "year": year,
         "participation_count": participation_count,
+        "year_events_count": championship["events_count"],
+        "teams_total": championship["teams_count"],
         "championship_points": championship_points,
         "championship_place": championship_place,
         "average_points": average_points,
         "best_bonus_category": best_bonus_category,
         "best_result": best_result,
         "radar_svg_path": radar_svg_path,
+        "season_events": events,
+        "radar_rounds": radar_result["rounds"],
         "round_averages": averages_result["round_averages"],
     }
 

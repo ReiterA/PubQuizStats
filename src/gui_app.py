@@ -1,13 +1,16 @@
 import os
+import shutil
+import subprocess
 import sys
-from html import escape as html_escape
+import tempfile
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QFontDatabase, QPageLayout, QTextDocument
+from PySide6.QtGui import QFont, QFontDatabase, QImage, QPainter, QPageLayout
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -29,6 +32,25 @@ from PySide6.QtWidgets import (
 
 import db_report
 import import_quiz_results
+
+
+def detect_office_converter() -> str | None:
+    """Return absolute path to soffice/libreoffice if available."""
+    for name in ("soffice", "libreoffice"):
+        resolved = shutil.which(name)
+        if resolved:
+            return resolved
+
+    for path in (
+        "/usr/bin/soffice",
+        "/usr/bin/libreoffice",
+        "/snap/bin/soffice",
+        "/opt/libreoffice/program/soffice",
+    ):
+        if Path(path).exists():
+            return path
+
+    return None
 
 
 class ImportTab(QWidget):
@@ -228,6 +250,9 @@ class ReportsTab(QWidget):
         btn_row.addWidget(pdf_btn)
         btn_row.addWidget(team_pdf_btn)
 
+        self.soffice_info = QLabel()
+        self.soffice_info.setWordWrap(True)
+
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         mono_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
@@ -236,9 +261,21 @@ class ReportsTab(QWidget):
 
         layout.addLayout(controls)
         layout.addLayout(btn_row)
+        layout.addWidget(self.soffice_info)
         layout.addWidget(self.output)
 
+        self._refresh_converter_info()
         self._refresh_events()
+
+    def _refresh_converter_info(self):
+        converter = detect_office_converter()
+        if converter:
+            self.soffice_info.setText(f"DOCX->PDF converter found: {converter}")
+            return
+
+        self.soffice_info.setText(
+            "DOCX->PDF converter not found. Install LibreOffice and ensure 'soffice' is available in PATH."
+        )
 
     def _refresh_events(self):
         db = self.db_path.text().strip()
@@ -305,64 +342,202 @@ class ReportsTab(QWidget):
             safe_team = "team"
         return f"{safe_team}_{year}_team_report.pdf"
 
-    def _build_team_pdf_html(self, report: dict) -> str:
-        radar_uri = Path(report["radar_svg_path"]).resolve().as_uri()
-
-        def format_value(value, suffix=""):
-            if value is None:
-                return "-"
-            if isinstance(value, float):
-                return f"{value:.2f}{suffix}"
-            return f"{value}{suffix}"
-
-        best_bonus = report.get("best_bonus_category")
+    def _template_values(self, report: dict) -> dict:
+        events = report.get("season_events", [])
+        radar_rounds = report.get("radar_rounds", [])
         best_result = report.get("best_result")
 
-        best_bonus_text = "-"
-        if best_bonus is not None:
-            best_bonus_text = f"{best_bonus['round_name']} ({best_bonus['avg_points']:.2f})"
+        best_pos_event = None
+        positioned_events = [event for event in events if event.get("position") is not None]
+        if positioned_events:
+            best_pos_event = min(positioned_events, key=lambda event: event["position"])
 
-        best_result_text = "-"
-        if best_result is not None:
-            best_result_text = (
-                f"{best_result['total_points']} Punkte"
-                f" - {html_escape(best_result['event_date'])} @ {html_escape(best_result['location'])}"
+        ranked_rounds = [row for row in radar_rounds if row.get("position") is not None]
+        best_category = None
+        if ranked_rounds:
+            best_category = min(
+                ranked_rounds,
+                key=lambda row: (
+                    row["position"],
+                    -(row["avg_points"] if row.get("avg_points") is not None else 0),
+                    row["round_name"],
+                ),
             )
 
-        return f"""<!doctype html>
-<html>
-<head>
-  <meta charset='utf-8'>
-  <style>
-    body {{ font-family: Arial, sans-serif; color: #111827; margin: 0; padding: 28px; }}
-    .title {{ font-size: 26px; font-weight: 700; margin: 0 0 8px 0; }}
-    .subtitle {{ font-size: 13px; color: #6b7280; margin-bottom: 20px; }}
-    .summary {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; margin-bottom: 18px; }}
-    .item {{ padding: 12px 14px; border: 1px solid #dbe3ef; border-radius: 12px; background: #f8fbff; }}
-    .label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #6b7280; margin-bottom: 6px; }}
-    .value {{ font-size: 16px; font-weight: 600; color: #111827; }}
-    .full {{ grid-column: 1 / -1; }}
-    .chart {{ margin-top: 18px; border: 1px solid #dbe3ef; border-radius: 16px; padding: 10px; background: white; }}
-    .chart img {{ width: 100%; height: auto; display: block; }}
-  </style>
-</head>
-<body>
-  <div class='title'>Team Report: {html_escape(report['team_name'])} ({report['year']})</div>
-  <div class='subtitle'>Automatisch generierter PDF-Report mit Teamprofil und Radar-Plot.</div>
-  <div class='summary'>
-    <div class='item'><div class='label'>Teamname</div><div class='value'>{html_escape(report['team_name'])}</div></div>
-    <div class='item'><div class='label'>Anzahl Teilnahmen</div><div class='value'>{format_value(report['participation_count'])}</div></div>
-    <div class='item'><div class='label'>Meisterschaftspunkte insgesamt</div><div class='value'>{format_value(report['championship_points'])}</div></div>
-    <div class='item'><div class='label'>Platzierung in der Meisterschaft</div><div class='value'>{format_value(report['championship_place'])}</div></div>
-    <div class='item'><div class='label'>Durchschnittliche Punkte</div><div class='value'>{format_value(report['average_points'])}</div></div>
-    <div class='item'><div class='label'>Beste Bonus-Kategorie</div><div class='value'>{html_escape(best_bonus_text)}</div></div>
-    <div class='item full'><div class='label'>Bestes Ergebnis</div><div class='value'>{html_escape(best_result_text)}</div></div>
-  </div>
-  <div class='chart'>
-    <img src='{radar_uri}' alt='Radar plot for {html_escape(report['team_name'])}'>
-  </div>
-</body>
-</html>"""
+        year_events_count = report.get("year_events_count")
+        if year_events_count is None:
+            year_events_count = len(events)
+
+        return {
+            "YEAR": str(report["year"]),
+            "Team Name": report["team_name"],
+            "Teams": str(report.get("teams_total", "-")),
+            "ChampionshipPoints": "-" if report["championship_points"] is None else str(report["championship_points"]),
+            "ChampionshipPosition": "-" if report["championship_place"] is None else str(report["championship_place"]),
+            "BestPos": "-" if best_pos_event is None else str(best_pos_event["position"]),
+            "DateBestPos": "-" if best_pos_event is None else best_pos_event["event_date"],
+            "LocBestPos": "-" if best_pos_event is None else best_pos_event["location"],
+            "BestPoints": "-" if best_result is None else str(best_result["total_points"]),
+            "DateBestPoints": "-" if best_result is None else best_result["event_date"],
+            "LocBestPoints": "-" if best_result is None else best_result["location"],
+            "AvgPoints": "-" if report["average_points"] is None else f"{report['average_points']:.2f}",
+            "BestCat": "-" if best_category is None else best_category["round_name"],
+            "BestCatPos": "-" if best_category is None else str(best_category["position"]),
+            "nTeams": "-" if best_category is None else str(best_category["total_teams"]),
+            "Participations": str(report["participation_count"]),
+            "nRoundsPlayed": str(year_events_count),
+        }
+
+    def _iter_docx_paragraphs(self, document):
+        for paragraph in document.paragraphs:
+            yield paragraph
+        for table in document.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        yield paragraph
+
+    def _replace_placeholder_in_paragraph(self, paragraph, placeholder: str, value: str) -> bool:
+        run_texts = [run.text for run in paragraph.runs]
+        full_text = "".join(run_texts)
+        if placeholder not in full_text:
+            return False
+
+        start = full_text.find(placeholder)
+        end = start + len(placeholder)
+
+        boundaries = []
+        offset = 0
+        for idx, text in enumerate(run_texts):
+            boundaries.append((idx, offset, offset + len(text)))
+            offset += len(text)
+
+        start_idx = None
+        end_idx = None
+        for idx, b_start, b_end in boundaries:
+            if start_idx is None and b_start <= start < b_end:
+                start_idx = idx
+            if b_start < end <= b_end:
+                end_idx = idx
+                break
+
+        if start_idx is None or end_idx is None:
+            paragraph.text = full_text.replace(placeholder, value)
+            return True
+
+        start_run = paragraph.runs[start_idx]
+        end_run = paragraph.runs[end_idx]
+
+        start_local = start - boundaries[start_idx][1]
+        end_local = end - boundaries[end_idx][1]
+
+        prefix = start_run.text[:start_local]
+        suffix = end_run.text[end_local:]
+        start_run.text = prefix + value + suffix
+
+        for idx in range(start_idx + 1, end_idx + 1):
+            paragraph.runs[idx].text = ""
+
+        return True
+
+    def _render_radar_png(self, svg_path: str, png_path: str, width: int = 1800, height: int = 1200) -> str:
+        renderer = QSvgRenderer(svg_path)
+        if not renderer.isValid():
+            raise RuntimeError("Radar SVG could not be loaded.")
+
+        image = QImage(width, height, QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.white)
+
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        renderer.render(painter)
+        painter.end()
+
+        if not image.save(png_path, "PNG"):
+            raise RuntimeError("Failed to render radar PNG.")
+        return png_path
+
+    def _replace_docx_placeholders(self, document, values: dict) -> None:
+        for placeholder, value in values.items():
+            token = "{" + placeholder + "}"
+            replacement = str(value)
+            for paragraph in self._iter_docx_paragraphs(document):
+                while self._replace_placeholder_in_paragraph(paragraph, token, replacement):
+                    continue
+
+    def _insert_radar_into_docx(self, document, radar_png_path: str) -> bool:
+        from docx.shared import Inches
+
+        token = "{RadarPlot}"
+        for paragraph in self._iter_docx_paragraphs(document):
+            found = False
+            while self._replace_placeholder_in_paragraph(paragraph, token, ""):
+                found = True
+
+            if found:
+                run = paragraph.add_run()
+                run.add_picture(radar_png_path, width=Inches(6.2))
+                return True
+        return False
+
+    def _convert_docx_to_pdf(self, docx_path: str, pdf_path: str) -> None:
+        converter = detect_office_converter()
+        if converter is None:
+            raise RuntimeError(
+                "No DOCX-to-PDF converter found. Install LibreOffice and ensure 'soffice' is available in PATH."
+            )
+
+        out_dir = Path(pdf_path).parent.resolve()
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        command = [
+            converter,
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(out_dir),
+            str(Path(docx_path).resolve()),
+        ]
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"DOCX conversion failed: {result.stderr.strip() or result.stdout.strip()}")
+
+        converted = out_dir / (Path(docx_path).stem + ".pdf")
+        if not converted.exists():
+            raise RuntimeError("DOCX conversion did not produce a PDF file.")
+
+        target = Path(pdf_path).resolve()
+        if converted.resolve() != target:
+            converted.replace(target)
+
+    def _render_team_pdf_from_docx_template(self, report: dict, output_pdf_path: str) -> None:
+        try:
+            from docx import Document
+        except Exception as exc:
+            raise RuntimeError("python-docx is required. Install it with: pip install python-docx") from exc
+
+        template_path = Path("data") / "templates" / "TeamReportTemplate.docx"
+        if not template_path.exists():
+            raise FileNotFoundError(f"Template not found: {template_path}")
+
+        values = self._template_values(report)
+
+        with tempfile.TemporaryDirectory(prefix="team-report-") as tmp_dir:
+            tmp_docx = Path(tmp_dir) / "team_report_filled.docx"
+            tmp_png = Path(tmp_dir) / "radar_plot.png"
+
+            self._render_radar_png(report["radar_svg_path"], str(tmp_png))
+
+            document = Document(str(template_path))
+            self._replace_docx_placeholders(document, values)
+            inserted = self._insert_radar_into_docx(document, str(tmp_png))
+            if not inserted:
+                raise RuntimeError("Placeholder {RadarPlot} not found in DOCX template.")
+
+            document.save(str(tmp_docx))
+            self._convert_docx_to_pdf(str(tmp_docx), output_pdf_path)
 
     def _generate_team_pdf(self):
         team_name = self.team.text().strip()
@@ -383,15 +558,7 @@ class ReportsTab(QWidget):
             report = db_report.get_team_profile_report(team_name, self.year.value(), self.min_events.value(), db)
             radar_path = report.get("radar_svg_path")
 
-            doc = QTextDocument()
-            doc.setHtml(self._build_team_pdf_html(report))
-
-            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-            printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
-            printer.setOutputFileName(path)
-            printer.setPageOrientation(QPageLayout.Orientation.Portrait)
-
-            doc.print_(printer)
+            self._render_team_pdf_from_docx_template(report, path)
             QMessageBox.information(self, "PDF saved", f"Team report saved to:\n{path}")
         except Exception as exc:
             QMessageBox.critical(self, "Team PDF failed", str(exc))
