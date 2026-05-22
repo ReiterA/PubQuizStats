@@ -9,6 +9,10 @@ TEAM_NAME_ALIASES = {
     "Sphinxi": "Sphinxi und Indiana Jones",
     "Sphinxi & Indiana Jones": "Sphinxi und Indiana Jones",
 
+    # Lavezzi variants seen in imported event data
+    "Lavezzi‘s verschwörung": "Lavezzi's Verschwörung",
+    "Lavezzis Erben": "Lavezzi's Erben",
+
     # Turboschnecken with soft hyphen (appears in some Excel files)
     "Turbo­schnecken": "Turboschnecken",
 
@@ -18,4 +22,8 @@ TEAM_NAME_ALIASES = {
     "Mehr oder weniger": "Mehr oder Weniger",
 
     "Nicht für Elend": "Not für Elend",
+
+    "katzbach": "Katzbach",
+
+    "Quiz(n)losen": "Die Quiz(n)losen",
 }

@@ -294,49 +294,47 @@ def get_team_season_results(team_name: str, year: int, db_path: str = DB_PATH_DE
     year_prefix = f"{year:04d}-%"
     
     with _connect(db_path) as conn:
-        results = conn.execute(
+        all_rows = conn.execute(
             """
             SELECT
                 e.id,
                 e.event_date,
                 e.location,
+                t.team_name,
                 t.team_rank,
                 t.total,
                 t.bonus_round
             FROM quiz_events e
             JOIN quiz_teams t ON e.id = t.event_id
             WHERE e.event_date LIKE ?
-            AND LOWER(TRIM(t.team_name)) = LOWER(TRIM(?))
             ORDER BY e.event_date ASC, e.location ASC
             """,
-            (year_prefix, team_name),
+            (year_prefix,),
         ).fetchall()
-        
-        # If no results with exact name match, try with canonical name
-        if not results:
-            # Get all teams for this year and check canonical names
-            all_teams = conn.execute(
-                """
-                SELECT DISTINCT
-                    e.id,
-                    e.event_date,
-                    e.location,
-                    t.team_name,
-                    t.team_rank,
-                    t.total,
-                    t.bonus_round
-                FROM quiz_events e
-                JOIN quiz_teams t ON e.id = t.event_id
-                WHERE e.event_date LIKE ?
-                ORDER BY e.event_date ASC, e.location ASC
-                """,
-                (year_prefix,),
-            ).fetchall()
-            
-            results = [
-                row for row in all_teams
-                if _canonical_team_name(row["team_name"]) == canonical_team
-            ]
+
+        # Collect all rows that canonicalize to the requested team.
+        # If aliases appear twice in one event, keep the better rank/score row.
+        results_by_event: Dict[int, Dict] = {}
+        for row in all_rows:
+            if _canonical_team_name(row["team_name"]) != canonical_team:
+                continue
+
+            event_id = row["id"]
+            candidate = dict(row)
+            existing = results_by_event.get(event_id)
+            if existing is None:
+                results_by_event[event_id] = candidate
+                continue
+
+            candidate_rank = candidate["team_rank"] if candidate["team_rank"] is not None else 9999
+            existing_rank = existing["team_rank"] if existing["team_rank"] is not None else 9999
+            candidate_total = candidate["total"] if candidate["total"] is not None else 0
+            existing_total = existing["total"] if existing["total"] is not None else 0
+
+            if candidate_rank < existing_rank or (candidate_rank == existing_rank and candidate_total > existing_total):
+                results_by_event[event_id] = candidate
+
+        results = sorted(results_by_event.values(), key=lambda row: (row["event_date"], row["location"]))
         
         events_data = []
         for row in results:
@@ -402,38 +400,18 @@ def get_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_DE
     year_prefix = f"{year:04d}-%"
     
     with _connect(db_path) as conn:
-        # Get all team_ids for this team and year
-        team_ids = conn.execute(
+        # Resolve all team IDs in the year that canonicalize to the requested team.
+        all_team_ids = conn.execute(
             """
-            SELECT DISTINCT t.id
+            SELECT DISTINCT t.id, t.team_name
             FROM quiz_teams t
             JOIN quiz_events e ON t.event_id = e.id
             WHERE e.event_date LIKE ?
-            AND (
-                LOWER(TRIM(t.team_name)) = LOWER(TRIM(?))
-                OR LOWER(TRIM(t.team_name)) = LOWER(TRIM(?))
-            )
             """,
-            (year_prefix, team_name, canonical_team),
+            (year_prefix,),
         ).fetchall()
-        
-        if not team_ids and canonical_team != team_name:
-            # Try again with just canonical name for alias lookup
-            all_teams = conn.execute(
-                """
-                SELECT DISTINCT t.id, t.team_name
-                FROM quiz_teams t
-                JOIN quiz_events e ON t.event_id = e.id
-                WHERE e.event_date LIKE ?
-                """,
-                (year_prefix,),
-            ).fetchall()
-            team_ids = [
-                {"id": row["id"]} for row in all_teams
-                if _canonical_team_name(row["team_name"]) == canonical_team
-            ]
-        
-        team_id_list = [row["id"] for row in team_ids]
+
+        team_id_list = [row["id"] for row in all_team_ids if _canonical_team_name(row["team_name"]) == canonical_team]
         if not team_id_list:
             return {
                 "team_name": canonical_team,
@@ -840,8 +818,8 @@ def render_team_report_radar_svg(result: Dict, output_path: Optional[str] = None
         lx, ly = center_x + math.cos(angle) * (radius + 52), center_y + math.sin(angle) * (radius + 52)
         value_text = "-" if axis["avg_points"] is None else f"{avg_points:.2f} Pts"
         labels.append(
-            f'<text x="{lx:.1f}" y="{ly - 8:.1f}" text-anchor="middle" font-size="19" font-weight="600" fill="#1f2937">{escape(axis["name"])}</text>'
-            f'<text x="{lx:.1f}" y="{ly + 13:.1f}" text-anchor="middle" font-size="15" fill="#4b5563">{escape(value_text)}</text>'
+            f'<text x="{lx:.1f}" y="{ly - 8:.1f}" text-anchor="middle" font-size="21" font-weight="600" fill="#1f2937">{escape(axis["name"])}</text>'
+            f'<text x="{lx:.1f}" y="{ly + 13:.1f}" text-anchor="middle" font-size="17" fill="#4b5563">{escape(value_text)}</text>'
         )
 
     rings = []
@@ -945,8 +923,8 @@ def render_team_report_position_radar_svg(result: Dict, output_path: Optional[st
 
         lx, ly = center_x + math.cos(angle) * (radius + 52), center_y + math.sin(angle) * (radius + 52)
         labels.append(
-            f'<text x="{lx:.1f}" y="{ly - 8:.1f}" text-anchor="middle" font-size="19" font-weight="600" fill="#1f2937">{escape(row["round_name"])}</text>'
-            f'<text x="{lx:.1f}" y="{ly + 13:.1f}" text-anchor="middle" font-size="15" fill="#4b5563">{escape(pos_text)}</text>'
+            f'<text x="{lx:.1f}" y="{ly - 8:.1f}" text-anchor="middle" font-size="21" font-weight="600" fill="#1f2937">{escape(row["round_name"])}</text>'
+            f'<text x="{lx:.1f}" y="{ly + 13:.1f}" text-anchor="middle" font-size="17" fill="#4b5563">{escape(pos_text)}</text>'
         )
 
     rings = []
@@ -1066,18 +1044,21 @@ def render_team_report_event_bars_svg(result: Dict, output_path: Optional[str] =
         )
 
         value_labels.append(
-            f'<text x="{(points_x + bar_width / 2):.1f}" y="{max(20.0, points_y - 10):.1f}" text-anchor="middle" font-size="16" font-weight="600" fill="#1e3a8a">{points_value:.0f} Pts</text>'
+            f'<text x="{(points_x + bar_width / 2):.1f}" y="{max(20.0, points_y - 10):.1f}" text-anchor="middle" font-size="18" font-weight="600" fill="#1e3a8a">{points_value:.0f} Pts</text>'
         )
         pos_label = f"Pos. {int(position_value)}" if position_value is not None else "Pos. -"
         value_labels.append(
-            f'<text x="{(position_x + bar_width / 2):.1f}" y="{max(20.0, position_y - 10):.1f}" text-anchor="middle" font-size="16" font-weight="600" fill="#c2410c">{pos_label}</text>'
+            f'<text x="{(position_x + bar_width / 2):.1f}" y="{max(20.0, position_y - 10):.1f}" text-anchor="middle" font-size="18" font-weight="600" fill="#c2410c">{pos_label}</text>'
         )
 
         date_text = escape(str(event.get("event_date", "")))
-        location_text = escape(str(event.get("location", ""))[:18])
+        location_raw = str(event.get("location", "")).strip()
+        if location_raw.casefold() == "gloriousbastards":
+            location_raw = "Bastards"
+        location_text = escape(location_raw[:18])
         labels.append(
-            f'<text x="{group_center:.1f}" y="{baseline_y + 28:.1f}" text-anchor="middle" font-size="16" font-weight="600" fill="#111827">{date_text}</text>'
-            f'<text x="{group_center:.1f}" y="{baseline_y + 48:.1f}" text-anchor="middle" font-size="14" fill="#6b7280">{location_text}</text>'
+            f'<text x="{group_center:.1f}" y="{baseline_y + 58:.1f}" text-anchor="end" font-size="18" font-weight="600" fill="#111827" transform="rotate(-90 {group_center:.1f} {baseline_y + 58:.1f})">{date_text}</text>'
+            f'<text x="{group_center + 22:.1f}" y="{baseline_y + 58:.1f}" text-anchor="end" font-size="16" fill="#6b7280" transform="rotate(-90 {group_center + 22:.1f} {baseline_y + 58:.1f})">{location_text}</text>'
         )
 
     svg = f'''<?xml version="1.0" encoding="UTF-8"?>

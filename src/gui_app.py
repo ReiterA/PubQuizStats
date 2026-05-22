@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
+    QProgressDialog,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -247,9 +248,12 @@ class ReportsTab(QWidget):
         pdf_btn.clicked.connect(self._generate_pdf)
         team_pdf_btn = QPushButton("Generate Team PDF")
         team_pdf_btn.clicked.connect(self._generate_team_pdf)
+        all_team_pdf_btn = QPushButton("Generate All Team Reports")
+        all_team_pdf_btn.clicked.connect(self._generate_all_team_reports)
         btn_row.addWidget(run_btn)
         btn_row.addWidget(pdf_btn)
         btn_row.addWidget(team_pdf_btn)
+        btn_row.addWidget(all_team_pdf_btn)
 
         self.soffice_info = QLabel()
         self.soffice_info.setWordWrap(True)
@@ -650,6 +654,66 @@ class ReportsTab(QWidget):
                     Path(event_chart_path).unlink(missing_ok=True)
                 except Exception:
                     pass
+
+    def _generate_all_team_reports(self):
+        db = self.db_path.text().strip()
+        year = self.year.value()
+        folder = QFileDialog.getExistingDirectory(self, "Select output folder")
+        if not folder:
+            return
+
+        try:
+            standings = db_report.get_championship_standings(year, db)["standings"]
+        except Exception as exc:
+            QMessageBox.critical(self, "Batch export failed", str(exc))
+            return
+
+        if not standings:
+            QMessageBox.information(self, "No teams", f"No teams found for {year}.")
+            return
+
+        self.output.setPlainText(f"Generating team reports for {year}...\n")
+        progress = QProgressDialog(f"Generating team reports for {year}...", None, 0, len(standings), self)
+        progress.setWindowTitle("Generating team reports")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.show()
+        QApplication.processEvents()
+
+        successes = 0
+        failures = []
+
+        for index, team in enumerate(standings, start=1):
+            team_name = team["team_name"]
+            progress.setLabelText(f"Generating {team_name} ({index}/{len(standings)})")
+            safe_team = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in team_name.strip()).strip("_")
+            if not safe_team:
+                safe_team = "team"
+            output_path = Path(folder) / f"{safe_team}_{year}_team_report.pdf"
+
+            try:
+                report = db_report.get_team_profile_report(team_name, year, self.min_events.value(), db)
+                self._render_team_pdf_from_docx_template(report, str(output_path))
+                successes += 1
+                self.output.appendPlainText(f"[{index}/{len(standings)}] OK: {team_name} -> {output_path.name}")
+            except Exception as exc:
+                failures.append((team_name, str(exc)))
+                self.output.appendPlainText(f"[{index}/{len(standings)}] FAIL: {team_name}: {exc}")
+
+            progress.setValue(index)
+            QApplication.processEvents()
+
+        progress.setValue(len(standings))
+        QApplication.processEvents()
+        progress.close()
+
+        summary = f"Finished. Successes: {successes}. Failures: {len(failures)}."
+        if failures:
+            summary += "\n\nFailures:\n" + "\n".join(f"- {name}: {message}" for name, message in failures)
+
+        QMessageBox.information(self, "Batch export finished", summary)
 
     def _run_report(self):
         report = self.report_type.currentText()
