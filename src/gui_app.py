@@ -1,10 +1,13 @@
 import os
 import sys
+from html import escape as html_escape
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtGui import QFont, QFontDatabase, QPageLayout, QTextDocument
+from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -159,6 +162,7 @@ class ReportsTab(QWidget):
                 "standings",
                 "team",
                 "averages",
+                "radar",
                 "consistency",
                 "difficulty",
                 "event-difficulty",
@@ -213,8 +217,16 @@ class ReportsTab(QWidget):
         controls.addRow("Location", self.location)
         controls.addRow("Event helper", event_pick_row)
 
+        btn_row = QHBoxLayout()
         run_btn = QPushButton("Run report")
         run_btn.clicked.connect(self._run_report)
+        pdf_btn = QPushButton("Generate Text PDF")
+        pdf_btn.clicked.connect(self._generate_pdf)
+        team_pdf_btn = QPushButton("Generate Team PDF")
+        team_pdf_btn.clicked.connect(self._generate_team_pdf)
+        btn_row.addWidget(run_btn)
+        btn_row.addWidget(pdf_btn)
+        btn_row.addWidget(team_pdf_btn)
 
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
@@ -223,7 +235,7 @@ class ReportsTab(QWidget):
         self.output.setFont(mono_font)
 
         layout.addLayout(controls)
-        layout.addWidget(run_btn)
+        layout.addLayout(btn_row)
         layout.addWidget(self.output)
 
         self._refresh_events()
@@ -267,6 +279,130 @@ class ReportsTab(QWidget):
             fn(*args, **kwargs)
         return buf.getvalue()
 
+    def _generate_pdf(self):
+        text = self.output.toPlainText().strip()
+        if not text:
+            QMessageBox.warning(self, "No report", "Run a report first before generating a PDF.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf)")
+        if not path:
+            return
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        printer.setOutputFileName(path)
+        printer.setPageOrientation(QPageLayout.Orientation.Portrait)
+
+        self.output.print_(printer)
+        QMessageBox.information(self, "PDF saved", f"Report saved to:\n{path}")
+
+    def _team_pdf_default_name(self, team_name: str, year: int) -> str:
+        safe_team = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in team_name.strip()).strip("_")
+        if not safe_team:
+            safe_team = "team"
+        return f"{safe_team}_{year}_team_report.pdf"
+
+    def _build_team_pdf_html(self, report: dict) -> str:
+        radar_uri = Path(report["radar_svg_path"]).resolve().as_uri()
+
+        def format_value(value, suffix=""):
+            if value is None:
+                return "-"
+            if isinstance(value, float):
+                return f"{value:.2f}{suffix}"
+            return f"{value}{suffix}"
+
+        best_bonus = report.get("best_bonus_category")
+        best_result = report.get("best_result")
+
+        best_bonus_text = "-"
+        if best_bonus is not None:
+            best_bonus_text = f"{best_bonus['round_name']} ({best_bonus['avg_points']:.2f})"
+
+        best_result_text = "-"
+        if best_result is not None:
+            best_result_text = (
+                f"{best_result['total_points']} Punkte"
+                f" - {html_escape(best_result['event_date'])} @ {html_escape(best_result['location'])}"
+            )
+
+        return f"""<!doctype html>
+<html>
+<head>
+  <meta charset='utf-8'>
+  <style>
+    body {{ font-family: Arial, sans-serif; color: #111827; margin: 0; padding: 28px; }}
+    .title {{ font-size: 26px; font-weight: 700; margin: 0 0 8px 0; }}
+    .subtitle {{ font-size: 13px; color: #6b7280; margin-bottom: 20px; }}
+    .summary {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; margin-bottom: 18px; }}
+    .item {{ padding: 12px 14px; border: 1px solid #dbe3ef; border-radius: 12px; background: #f8fbff; }}
+    .label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #6b7280; margin-bottom: 6px; }}
+    .value {{ font-size: 16px; font-weight: 600; color: #111827; }}
+    .full {{ grid-column: 1 / -1; }}
+    .chart {{ margin-top: 18px; border: 1px solid #dbe3ef; border-radius: 16px; padding: 10px; background: white; }}
+    .chart img {{ width: 100%; height: auto; display: block; }}
+  </style>
+</head>
+<body>
+  <div class='title'>Team Report: {html_escape(report['team_name'])} ({report['year']})</div>
+  <div class='subtitle'>Automatisch generierter PDF-Report mit Teamprofil und Radar-Plot.</div>
+  <div class='summary'>
+    <div class='item'><div class='label'>Teamname</div><div class='value'>{html_escape(report['team_name'])}</div></div>
+    <div class='item'><div class='label'>Anzahl Teilnahmen</div><div class='value'>{format_value(report['participation_count'])}</div></div>
+    <div class='item'><div class='label'>Meisterschaftspunkte insgesamt</div><div class='value'>{format_value(report['championship_points'])}</div></div>
+    <div class='item'><div class='label'>Platzierung in der Meisterschaft</div><div class='value'>{format_value(report['championship_place'])}</div></div>
+    <div class='item'><div class='label'>Durchschnittliche Punkte</div><div class='value'>{format_value(report['average_points'])}</div></div>
+    <div class='item'><div class='label'>Beste Bonus-Kategorie</div><div class='value'>{html_escape(best_bonus_text)}</div></div>
+    <div class='item full'><div class='label'>Bestes Ergebnis</div><div class='value'>{html_escape(best_result_text)}</div></div>
+  </div>
+  <div class='chart'>
+    <img src='{radar_uri}' alt='Radar plot for {html_escape(report['team_name'])}'>
+  </div>
+</body>
+</html>"""
+
+    def _generate_team_pdf(self):
+        team_name = self.team.text().strip()
+        if not team_name:
+            QMessageBox.warning(self, "Missing team", "Please enter a team name before generating the PDF.")
+            return
+
+        db = self.db_path.text().strip()
+        default_name = self._team_pdf_default_name(team_name, self.year.value())
+        path, _ = QFileDialog.getSaveFileName(self, "Save team PDF", default_name, "PDF Files (*.pdf)")
+        if not path:
+            return
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+
+        radar_path = None
+        try:
+            report = db_report.get_team_profile_report(team_name, self.year.value(), self.min_events.value(), db)
+            radar_path = report.get("radar_svg_path")
+
+            doc = QTextDocument()
+            doc.setHtml(self._build_team_pdf_html(report))
+
+            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+            printer.setOutputFileName(path)
+            printer.setPageOrientation(QPageLayout.Orientation.Portrait)
+
+            doc.print_(printer)
+            QMessageBox.information(self, "PDF saved", f"Team report saved to:\n{path}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Team PDF failed", str(exc))
+            self.output.setPlainText(f"ERROR:\n{exc}")
+        finally:
+            if radar_path:
+                try:
+                    Path(radar_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
     def _run_report(self):
         report = self.report_type.currentText()
         db = self.db_path.text().strip()
@@ -290,6 +426,15 @@ class ReportsTab(QWidget):
                 text = self._capture(db_report.print_team_season_results, self.team.text().strip(), self.year.value(), db)
             elif report == "averages":
                 text = self._capture(db_report.print_team_round_averages, self.team.text().strip(), self.year.value(), db)
+            elif report == "radar":
+                text = self._capture(
+                    db_report.print_team_radar_report,
+                    self.team.text().strip(),
+                    self.year.value(),
+                    self.min_events.value(),
+                    None,
+                    db,
+                )
             elif report == "consistency":
                 text = self._capture(db_report.print_consistency_report, self.year.value(), self.min_events.value(), db)
             elif report == "difficulty":

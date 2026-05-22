@@ -1,6 +1,9 @@
 import argparse
+import math
 import os
 import sqlite3
+from pathlib import Path
+from xml.sax.saxutils import escape
 from typing import Dict, List, Optional
 
 from championship_config import CHAMPIONSHIP_POINTS_BY_POSITION
@@ -489,6 +492,281 @@ def get_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_DE
             "round_averages": round_averages,
             "puzzle_average": puzzle_avg["avg_puzzle"],
         }
+
+
+def get_team_radar_report(
+    team_name: str,
+    year: int,
+    min_events: int = 2,
+    db_path: str = DB_PATH_DEFAULT,
+) -> Dict:
+    """Return radar-chart data for a team in a given year."""
+    canonical_team = _canonical_team_name(team_name)
+    ranking_report = get_round_strength_ranking(year=year, min_events=min_events, db_path=db_path)
+    ranking_map = {block["round_name"]: block["teams"] for block in ranking_report["rankings"]}
+
+    rounds = []
+    for round_name in ROUND_NAMES.values():
+        teams = ranking_map.get(round_name, [])
+        selected_position = None
+        selected_team = None
+        for position, team in enumerate(teams, start=1):
+            if team["team_name"].casefold() == canonical_team.casefold():
+                selected_position = position
+                selected_team = team
+                break
+
+        if selected_team is not None:
+            total_teams = len(teams)
+            max_avg_points = teams[0]["avg_points"] if teams else 0
+            avg_points = float(selected_team["avg_points"])
+            avg_score = (avg_points / max_avg_points) if max_avg_points else 0.0
+            placement_score = 1.0 if total_teams == 1 else (total_teams - selected_position) / (total_teams - 1)
+            rounds.append(
+                {
+                    "round_name": round_name,
+                    "avg_points": avg_points,
+                    "position": selected_position,
+                    "total_teams": total_teams,
+                    "avg_score": avg_score,
+                    "placement_score": placement_score,
+                    "events": selected_team["events"],
+                }
+            )
+            continue
+
+        rounds.append(
+            {
+                "round_name": round_name,
+                "avg_points": None,
+                "position": None,
+                "total_teams": len(teams),
+                "avg_score": 0.0,
+                "placement_score": 0.0,
+                "events": 0,
+            }
+        )
+
+    return {
+        "team_name": canonical_team,
+        "year": year,
+        "min_events": min_events,
+        "rounds": rounds,
+    }
+
+
+def _radar_output_path(team_name: str, year: int, output_path: Optional[str] = None) -> Path:
+    if output_path is not None and output_path.strip():
+        return Path(output_path.strip())
+
+    safe_team = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in team_name.strip()).strip("_")
+    if not safe_team:
+        safe_team = "team"
+    return Path("data") / "tmp" / f"team_radar_{safe_team}_{year}.svg"
+
+
+def render_team_radar_svg(result: Dict, output_path: Optional[str] = None) -> str:
+    """Render a team radar report to SVG and return the written file path."""
+    rounds = result["rounds"]
+    if not rounds:
+        raise ValueError("No round data available for radar rendering.")
+
+    target_path = _radar_output_path(result["team_name"], result["year"], output_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    width = 1100
+    height = 940
+    center_x = width / 2
+    center_y = 470
+    radius = 300
+    ring_count = 5
+
+    def polar_point(value: float, angle: float):
+        distance = radius * max(0.0, min(1.0, value))
+        return center_x + math.cos(angle) * distance, center_y + math.sin(angle) * distance
+
+    def format_point(x: float, y: float) -> str:
+        return f"{x:.1f},{y:.1f}"
+
+    def series_points(key: str):
+        points = []
+        count = len(rounds)
+        for index, row in enumerate(rounds):
+            angle = -math.pi / 2 + (2 * math.pi * index / count)
+            points.append(polar_point(float(row[key]), angle))
+        return points
+
+    avg_points = series_points("avg_score")
+    placement_points = series_points("placement_score")
+
+    labels = []
+    count = len(rounds)
+    for index, row in enumerate(rounds):
+        angle = -math.pi / 2 + (2 * math.pi * index / count)
+        label_x, label_y = polar_point(1.18, angle)
+        position = row["position"]
+        total_teams = row["total_teams"]
+        if row["avg_points"] is None:
+            subtitle = "keine Daten"
+        else:
+            subtitle = f"Ø {row['avg_points']:.2f} | Platz {position}/{total_teams}"
+        labels.append(
+            f'<text x="{label_x:.1f}" y="{label_y:.1f}" text-anchor="middle" font-size="18" font-weight="600" fill="#1f2937">{escape(row["round_name"])}</text>'
+            f'<text x="{label_x:.1f}" y="{label_y + 22:.1f}" text-anchor="middle" font-size="13" fill="#4b5563">{escape(subtitle)}</text>'
+        )
+
+    grid_rings = []
+    for step in range(1, ring_count + 1):
+        ring_radius = radius * step / ring_count
+        grid_rings.append(
+            f'<circle cx="{center_x:.1f}" cy="{center_y:.1f}" r="{ring_radius:.1f}" fill="none" stroke="#d6dbe6" stroke-width="1" />'
+        )
+
+    spokes = []
+    for index, _row in enumerate(rounds):
+        angle = -math.pi / 2 + (2 * math.pi * index / count)
+        end_x, end_y = polar_point(1.0, angle)
+        spokes.append(
+            f'<line x1="{center_x:.1f}" y1="{center_y:.1f}" x2="{end_x:.1f}" y2="{end_y:.1f}" stroke="#d6dbe6" stroke-width="1" />'
+        )
+
+    def polygon_points(points):
+        return " ".join(format_point(x, y) for x, y in points)
+
+    avg_polygon = polygon_points(avg_points)
+    placement_polygon = polygon_points(placement_points)
+
+    avg_markers = "\n".join(
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#2563eb" stroke="#ffffff" stroke-width="2" />'
+        for x, y in avg_points
+    )
+    placement_markers = "\n".join(
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#f97316" stroke="#ffffff" stroke-width="2" />'
+        for x, y in placement_points
+    )
+
+    svg = f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="100%" height="100%" fill="#f8fafc" />
+  <rect x="26" y="26" width="{width - 52}" height="{height - 52}" rx="28" fill="#ffffff" stroke="#e5e7eb" />
+  <text x="{center_x:.1f}" y="78" text-anchor="middle" font-size="30" font-weight="700" fill="#111827">Radar-Report für {escape(result["team_name"])} ({result["year"]})</text>
+  <text x="{center_x:.1f}" y="112" text-anchor="middle" font-size="15" fill="#4b5563">Durchschnittspunkte und Platzierung pro Runde sind auf 0..1 normalisiert.</text>
+
+  <g opacity="0.95">
+    {''.join(grid_rings)}
+    {''.join(spokes)}
+  </g>
+
+  <polygon points="{avg_polygon}" fill="#2563eb" fill-opacity="0.16" stroke="#2563eb" stroke-width="3" />
+  <polygon points="{placement_polygon}" fill="#f97316" fill-opacity="0.14" stroke="#f97316" stroke-width="3" />
+  {avg_markers}
+  {placement_markers}
+
+  <g>
+    {''.join(labels)}
+  </g>
+
+  <g transform="translate(72, 834)">
+    <rect x="0" y="0" width="228" height="58" rx="16" fill="#eff6ff" stroke="#bfdbfe" />
+    <circle cx="24" cy="20" r="7" fill="#2563eb" />
+    <text x="42" y="25" font-size="15" fill="#1f2937">Ø Punkte</text>
+    <circle cx="24" cy="42" r="7" fill="#f97316" />
+    <text x="42" y="47" font-size="15" fill="#1f2937">Platzierung</text>
+  </g>
+</svg>
+'''
+
+    target_path.write_text(svg, encoding="utf-8")
+    return str(target_path)
+
+
+def print_team_radar_report(
+    team_name: str,
+    year: int,
+    min_events: int = 2,
+    output_path: Optional[str] = None,
+    db_path: str = DB_PATH_DEFAULT,
+) -> None:
+    """Print a team radar report and export an SVG radar plot."""
+    result = get_team_radar_report(team_name=team_name, year=year, min_events=min_events, db_path=db_path)
+
+    print(f"Radar report for {result['team_name']} ({result['year']})")
+    print(f"Minimum events per round: {result['min_events']}")
+    print()
+
+    if not result["rounds"]:
+        print("No round data found for this team in this year.")
+        return
+
+    print(f"{'Round':20}  {'Avg':>6}  {'Pos':>5}  {'Of':>4}  {'Norm Avg':>8}  {'Norm Pos':>8}")
+    print("""--------------------  ------  -----  ----  --------  --------""")
+
+    if not any(row["avg_points"] is not None for row in result["rounds"]):
+        print("No round data found for this team in this year.")
+        return
+
+    for row in result["rounds"]:
+        avg_text = f"{row['avg_points']:.2f}" if row["avg_points"] is not None else "-"
+        pos_text = f"{row['position']}" if row["position"] is not None else "-"
+        of_text = f"{row['total_teams']}" if row["total_teams"] else "-"
+        print(
+            f"{row['round_name'][:20]:20}  {avg_text:>6}  {pos_text:>5}  {of_text:>4}  {row['avg_score']:>8.2f}  {row['placement_score']:>8.2f}"
+        )
+
+    svg_path = render_team_radar_svg(result, output_path=output_path)
+    print()
+    print(f"Radar plot saved to: {svg_path}")
+
+
+def get_team_profile_report(
+    team_name: str,
+    year: int,
+    min_events: int = 2,
+    db_path: str = DB_PATH_DEFAULT,
+) -> Dict:
+    """Return a consolidated team profile summary with radar chart output."""
+    season_result = get_team_season_results(team_name, year, db_path)
+    averages_result = get_team_round_averages(team_name, year, db_path)
+    championship = get_championship_standings(year, db_path)
+    radar_result = get_team_radar_report(team_name, year, min_events=min_events, db_path=db_path)
+    radar_svg_path = render_team_radar_svg(radar_result)
+
+    events = season_result["events"]
+    total_points = sum(event["total_points"] or 0 for event in events)
+    participation_count = len(events)
+    average_points = (total_points / participation_count) if participation_count else None
+
+    best_result = None
+    if events:
+        best_result = max(events, key=lambda event: event["total_points"] or 0)
+
+    best_bonus_category = None
+    if averages_result["round_averages"]:
+        best_bonus_category = max(
+            averages_result["round_averages"],
+            key=lambda row: row["avg_points"] if row["avg_points"] is not None else float("-inf"),
+        )
+
+    championship_place = None
+    championship_points = None
+    for position, row in enumerate(championship["standings"], start=1):
+        if row["team_name"].casefold() == season_result["team_name"].casefold():
+            championship_place = position
+            championship_points = row["points"]
+            break
+
+    return {
+        "team_name": season_result["team_name"],
+        "year": year,
+        "participation_count": participation_count,
+        "championship_points": championship_points,
+        "championship_place": championship_place,
+        "average_points": average_points,
+        "best_bonus_category": best_bonus_category,
+        "best_result": best_result,
+        "radar_svg_path": radar_svg_path,
+        "round_averages": averages_result["round_averages"],
+    }
 
 
 def print_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_DEFAULT) -> None:
@@ -1063,6 +1341,23 @@ if __name__ == "__main__":
     averages_parser.add_argument("--team", type=str, required=True, help="Team name to show.")
     averages_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
 
+    radar_parser = subparsers.add_parser(
+        "radar", help="Print and export a radar plot for a team in a given year."
+    )
+    radar_parser.add_argument("--team", type=str, required=True, help="Team name to show.")
+    radar_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
+    radar_parser.add_argument(
+        "--min-events",
+        type=int,
+        default=2,
+        help="Minimum events per team in a round (default: 2).",
+    )
+    radar_parser.add_argument(
+        "--output",
+        type=str,
+        help="Optional SVG path for the generated radar plot.",
+    )
+
     consistency_parser = subparsers.add_parser(
         "consistency", help="Print team consistency report for a given year."
     )
@@ -1129,6 +1424,8 @@ if __name__ == "__main__":
         print_team_season_results(args.team, args.year, args.db)
     elif args.command == "averages":
         print_team_round_averages(args.team, args.year, args.db)
+    elif args.command == "radar":
+        print_team_radar_report(args.team, args.year, args.min_events, args.output, args.db)
     elif args.command == "consistency":
         print_consistency_report(args.year, args.min_events, args.db)
     elif args.command == "difficulty":
