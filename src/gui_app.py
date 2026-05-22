@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -369,6 +370,7 @@ class ReportsTab(QWidget):
             year_events_count = len(events)
 
         return {
+            "Date": datetime.now().strftime("%d.%m.%Y"),
             "YEAR": str(report["year"]),
             "Team Name": report["team_name"],
             "Teams": str(report.get("teams_total", "-")),
@@ -396,6 +398,24 @@ class ReportsTab(QWidget):
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
                         yield paragraph
+
+        # Include placeholders in headers/footers (e.g. footer date tokens).
+        for section in document.sections:
+            for paragraph in section.header.paragraphs:
+                yield paragraph
+            for table in section.header.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            yield paragraph
+
+            for paragraph in section.footer.paragraphs:
+                yield paragraph
+            for table in section.footer.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            yield paragraph
 
     def _replace_placeholder_in_paragraph(self, paragraph, placeholder: str, value: str) -> bool:
         run_texts = [run.text for run in paragraph.runs]
@@ -466,18 +486,10 @@ class ReportsTab(QWidget):
                 while self._replace_placeholder_in_paragraph(paragraph, token, replacement):
                     continue
 
-    def _insert_radar_into_docx(self, document, radar_png_path: str) -> bool:
+    def _replace_image_in_cell(self, cell, image_path: str) -> bool:
         from docx.enum.text import WD_ALIGN_PARAGRAPH
         from docx.shared import Emu, Inches
 
-        if len(document.tables) < 2:
-            return False
-
-        table = document.tables[1]
-        if len(table.rows) < 1 or len(table.columns) < 1:
-            return False
-
-        cell = table.cell(0, 0)
         preserved_width = None
         preserved_height = None
         preserved_alignment = None
@@ -508,13 +520,29 @@ class ReportsTab(QWidget):
 
         run = paragraph.add_run()
         if preserved_width is not None and preserved_height is not None:
-            run.add_picture(radar_png_path, width=preserved_width, height=preserved_height)
+            run.add_picture(image_path, width=preserved_width, height=preserved_height)
         elif cell.width:
-            run.add_picture(radar_png_path, width=int(cell.width * 0.92))
+            run.add_picture(image_path, width=int(cell.width * 0.92))
         else:
-            run.add_picture(radar_png_path, width=Inches(5.8))
+            run.add_picture(image_path, width=Inches(5.8))
 
         return True
+
+    def _insert_charts_into_docx(self, document, avg_radar_png_path: str, pos_radar_png_path: str, event_chart_png_path: str) -> bool:
+        if len(document.tables) < 2:
+            return False
+
+        table = document.tables[1]
+        if len(table.rows) < 1 or len(table.columns) < 2:
+            return False
+
+        left_ok = self._replace_image_in_cell(table.cell(0, 0), avg_radar_png_path)
+        right_ok = self._replace_image_in_cell(table.cell(0, 1), pos_radar_png_path)
+        bottom_ok = False
+        if len(table.rows) >= 2:
+            bottom_ok = self._replace_image_in_cell(table.cell(1, 0), event_chart_png_path)
+
+        return left_ok and right_ok and bottom_ok
 
     def _convert_docx_to_pdf(self, docx_path: str, pdf_path: str) -> None:
         converter = detect_office_converter()
@@ -561,15 +589,19 @@ class ReportsTab(QWidget):
 
         with tempfile.TemporaryDirectory(prefix="team-report-") as tmp_dir:
             tmp_docx = Path(tmp_dir) / "team_report_filled.docx"
-            tmp_png = Path(tmp_dir) / "radar_plot.png"
+            tmp_avg_png = Path(tmp_dir) / "radar_plot_avg.png"
+            tmp_pos_png = Path(tmp_dir) / "radar_plot_pos.png"
+            tmp_event_png = Path(tmp_dir) / "event_chart.png"
 
-            self._render_radar_png(report["radar_svg_path"], str(tmp_png))
+            self._render_radar_png(report["radar_svg_path"], str(tmp_avg_png))
+            self._render_radar_png(report["radar_position_svg_path"], str(tmp_pos_png))
+            self._render_radar_png(report["event_chart_svg_path"], str(tmp_event_png), width=2200, height=1000)
 
             document = Document(str(template_path))
             self._replace_docx_placeholders(document, values)
-            inserted = self._insert_radar_into_docx(document, str(tmp_png))
+            inserted = self._insert_charts_into_docx(document, str(tmp_avg_png), str(tmp_pos_png), str(tmp_event_png))
             if not inserted:
-                raise RuntimeError("Could not place radar plot in second table, top-left cell.")
+                raise RuntimeError("Could not place charts in second table.")
 
             document.save(str(tmp_docx))
             self._convert_docx_to_pdf(str(tmp_docx), output_pdf_path)
@@ -589,9 +621,13 @@ class ReportsTab(QWidget):
             path += ".pdf"
 
         radar_path = None
+        radar_position_path = None
+        event_chart_path = None
         try:
             report = db_report.get_team_profile_report(team_name, self.year.value(), self.min_events.value(), db)
             radar_path = report.get("radar_svg_path")
+            radar_position_path = report.get("radar_position_svg_path")
+            event_chart_path = report.get("event_chart_svg_path")
 
             self._render_team_pdf_from_docx_template(report, path)
             QMessageBox.information(self, "PDF saved", f"Team report saved to:\n{path}")
@@ -602,6 +638,16 @@ class ReportsTab(QWidget):
             if radar_path:
                 try:
                     Path(radar_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            if radar_position_path:
+                try:
+                    Path(radar_position_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            if event_chart_path:
+                try:
+                    Path(event_chart_path).unlink(missing_ok=True)
                 except Exception:
                     pass
 

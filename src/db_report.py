@@ -569,6 +569,84 @@ def get_team_radar_report(
     }
 
 
+def get_team_puzzle_ranking(
+    team_name: str,
+    year: int,
+    min_events: int = 2,
+    db_path: str = DB_PATH_DEFAULT,
+) -> Dict:
+    """Return puzzle ranking info for one team in a given year."""
+    canonical_team = _canonical_team_name(team_name)
+    year_prefix = f"{year:04d}-%"
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                qt.team_name,
+                qt.event_id,
+                qt.puzzle_points
+            FROM quiz_teams qt
+            JOIN quiz_events e ON e.id = qt.event_id
+            WHERE e.event_date LIKE ?
+              AND qt.puzzle_points IS NOT NULL
+            """,
+            (year_prefix,),
+        ).fetchall()
+
+    by_team: Dict[str, Dict[int, float]] = {}
+    for row in rows:
+        normalized_team = _canonical_team_name(row["team_name"])
+        event_id = row["event_id"]
+        puzzle_points = float(row["puzzle_points"])
+        by_team.setdefault(normalized_team, {})
+
+        # If aliases appear twice in one event, keep the higher puzzle score.
+        previous = by_team[normalized_team].get(event_id)
+        if previous is None or puzzle_points > previous:
+            by_team[normalized_team][event_id] = puzzle_points
+
+    rankings = []
+    for normalized_team, per_event in by_team.items():
+        values = list(per_event.values())
+        events_count = len(values)
+        if events_count < min_events:
+            continue
+        avg_points = sum(values) / events_count
+        rankings.append(
+            {
+                "team_name": normalized_team,
+                "avg_points": avg_points,
+                "events": events_count,
+            }
+        )
+
+    rankings.sort(key=lambda row: (-row["avg_points"], -row["events"], row["team_name"].lower()))
+
+    selected = None
+    for idx, row in enumerate(rankings, start=1):
+        if row["team_name"].casefold() == canonical_team.casefold():
+            selected = {
+                "team_name": canonical_team,
+                "position": idx,
+                "total_teams": len(rankings),
+                "avg_points": row["avg_points"],
+                "events": row["events"],
+            }
+            break
+
+    if selected is not None:
+        return selected
+
+    return {
+        "team_name": canonical_team,
+        "position": None,
+        "total_teams": len(rankings),
+        "avg_points": None,
+        "events": 0,
+    }
+
+
 def _radar_output_path(team_name: str, year: int, output_path: Optional[str] = None) -> Path:
     if output_path is not None and output_path.strip():
         return Path(output_path.strip())
@@ -762,8 +840,8 @@ def render_team_report_radar_svg(result: Dict, output_path: Optional[str] = None
         lx, ly = center_x + math.cos(angle) * (radius + 52), center_y + math.sin(angle) * (radius + 52)
         value_text = "-" if axis["avg_points"] is None else f"{avg_points:.2f} Pts"
         labels.append(
-            f'<text x="{lx:.1f}" y="{ly - 8:.1f}" text-anchor="middle" font-size="17" font-weight="600" fill="#1f2937">{escape(axis["name"])}</text>'
-            f'<text x="{lx:.1f}" y="{ly + 13:.1f}" text-anchor="middle" font-size="13" fill="#4b5563">{escape(value_text)}</text>'
+            f'<text x="{lx:.1f}" y="{ly - 8:.1f}" text-anchor="middle" font-size="19" font-weight="600" fill="#1f2937">{escape(axis["name"])}</text>'
+            f'<text x="{lx:.1f}" y="{ly + 13:.1f}" text-anchor="middle" font-size="15" fill="#4b5563">{escape(value_text)}</text>'
         )
 
     rings = []
@@ -791,6 +869,225 @@ def render_team_report_radar_svg(result: Dict, output_path: Optional[str] = None
   <g>
     {''.join(labels)}
   </g>
+</svg>
+'''
+
+    target_path.write_text(svg, encoding="utf-8")
+    return str(target_path)
+
+
+def render_team_report_position_radar_svg(result: Dict, output_path: Optional[str] = None) -> str:
+    """Render a minimalist radar plot for team reports (placement only)."""
+    rounds = result["rounds"]
+    if not rounds:
+        raise ValueError("No round data available for placement radar rendering.")
+
+    axes = list(rounds)
+    axes.append(
+        {
+            "round_name": "Puzzle",
+            "position": result.get("puzzle_position"),
+            "total_teams": result.get("puzzle_total_teams", 0),
+        }
+    )
+
+    if output_path is not None and output_path.strip():
+        target_path = Path(output_path.strip())
+    else:
+        safe_team = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in result["team_name"].strip()).strip("_")
+        if not safe_team:
+            safe_team = "team"
+        target_path = Path("data") / "tmp" / f"team_radar_pos_{safe_team}_{result['year']}.svg"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    width = 980
+    height = 980
+    center_x = width / 2
+    center_y = height / 2
+    radius = 320
+    ring_count = 5
+
+    def polar_point(normalized_value: float, angle: float):
+        normalized = max(0.0, min(1.0, normalized_value))
+        distance = radius * normalized
+        return center_x + math.cos(angle) * distance, center_y + math.sin(angle) * distance
+
+    def full_radius_point(angle: float):
+        return center_x + math.cos(angle) * radius, center_y + math.sin(angle) * radius
+
+    count = len(axes)
+    polygon_points = []
+    labels = []
+    spokes = []
+
+    for index, row in enumerate(axes):
+        angle = -math.pi / 2 + (2 * math.pi * index / count)
+        position = row.get("position")
+        total_teams = row.get("total_teams") or 0
+
+        if position is None or total_teams <= 0:
+            normalized_pos = 0.0
+            pos_text = "Pos. -"
+        elif total_teams == 1:
+            normalized_pos = 1.0
+            pos_text = "Pos. 1"
+        else:
+            normalized_pos = max(0.0, min(1.0, (total_teams - float(position)) / (total_teams - 1)))
+            pos_text = f"Pos. {int(position)}"
+
+        px, py = polar_point(normalized_pos, angle)
+        polygon_points.append((px, py))
+
+        sx, sy = full_radius_point(angle)
+        spokes.append(
+            f'<line x1="{center_x:.1f}" y1="{center_y:.1f}" x2="{sx:.1f}" y2="{sy:.1f}" stroke="#d6dbe6" stroke-width="1" />'
+        )
+
+        lx, ly = center_x + math.cos(angle) * (radius + 52), center_y + math.sin(angle) * (radius + 52)
+        labels.append(
+            f'<text x="{lx:.1f}" y="{ly - 8:.1f}" text-anchor="middle" font-size="19" font-weight="600" fill="#1f2937">{escape(row["round_name"])}</text>'
+            f'<text x="{lx:.1f}" y="{ly + 13:.1f}" text-anchor="middle" font-size="15" fill="#4b5563">{escape(pos_text)}</text>'
+        )
+
+    rings = []
+    for step in range(1, ring_count + 1):
+        ring_radius = radius * step / ring_count
+        rings.append(
+            f'<circle cx="{center_x:.1f}" cy="{center_y:.1f}" r="{ring_radius:.1f}" fill="none" stroke="#d6dbe6" stroke-width="1" />'
+        )
+
+    points_text = " ".join(f"{x:.1f},{y:.1f}" for x, y in polygon_points)
+    markers = "\n".join(
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4.5" fill="#f97316" stroke="#ffffff" stroke-width="2" />'
+        for x, y in polygon_points
+    )
+
+    svg = f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <g opacity="0.95">
+    {''.join(rings)}
+    {''.join(spokes)}
+  </g>
+  <polygon points="{points_text}" fill="#f97316" fill-opacity="0.18" stroke="#f97316" stroke-width="3" />
+  {markers}
+  <g>
+    {''.join(labels)}
+  </g>
+</svg>
+'''
+
+    target_path.write_text(svg, encoding="utf-8")
+    return str(target_path)
+
+
+def render_team_report_event_bars_svg(result: Dict, output_path: Optional[str] = None) -> str:
+    """Render a wide season event bar chart for points and placement."""
+    events = result.get("season_events", [])
+    if not events:
+        raise ValueError("No event data available for season chart rendering.")
+
+    if output_path is not None and output_path.strip():
+        target_path = Path(output_path.strip())
+    else:
+        safe_team = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in result["team_name"].strip()).strip("_")
+        if not safe_team:
+            safe_team = "team"
+        target_path = Path("data") / "tmp" / f"team_events_{safe_team}_{result['year']}.svg"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    width = 1600
+    height = 760
+    margin_left = 95
+    margin_right = 45
+    margin_top = 48
+    margin_bottom = 155
+    plot_width = width - margin_left - margin_right
+    plot_height = height - margin_top - margin_bottom
+    baseline_y = margin_top + plot_height
+
+    points_axis_min = float(result.get("points_axis_min", 30.0))
+    points_axis_max = float(result.get("points_axis_max", points_axis_min))
+    position_axis_min = 1.0
+    position_axis_max = float(result.get("position_axis_max", 1.0))
+
+    event_slot_width = plot_width / max(1, len(events))
+    group_width = min(110.0, event_slot_width * 0.72)
+    bar_width = min(40.0, group_width * 0.36)
+    bar_gap = min(14.0, group_width * 0.12)
+
+    def points_height(points_value: float) -> float:
+        if points_axis_max <= points_axis_min:
+            normalized = 1.0 if points_value >= points_axis_max else 0.0
+        else:
+            normalized = (points_value - points_axis_min) / (points_axis_max - points_axis_min)
+        return plot_height * max(0.0, min(1.0, normalized))
+
+    def position_height(position_value: Optional[int]) -> float:
+        if position_value is None:
+            return 0.0
+        if position_axis_max <= position_axis_min:
+            return plot_height
+        normalized = (position_axis_max - float(position_value)) / (position_axis_max - position_axis_min)
+        return plot_height * max(0.0, min(1.0, normalized))
+
+    grid_lines = []
+    for step in range(6):
+        y = margin_top + plot_height * step / 5
+        grid_lines.append(
+            f'<line x1="{margin_left:.1f}" y1="{y:.1f}" x2="{width - margin_right:.1f}" y2="{y:.1f}" stroke="#e5e7eb" stroke-width="1" />'
+        )
+
+    bars = []
+    labels = []
+    value_labels = []
+    x_axis = [
+        f'<line x1="{margin_left:.1f}" y1="{baseline_y:.1f}" x2="{width - margin_right:.1f}" y2="{baseline_y:.1f}" stroke="#cbd5e1" stroke-width="1.5" />'
+    ]
+
+    for idx, event in enumerate(events):
+        group_center = margin_left + event_slot_width * idx + event_slot_width / 2
+        points_value = float(event.get("total_points") or 0)
+        position_value = event.get("position")
+
+        points_bar_height = points_height(points_value)
+        position_bar_height = position_height(position_value)
+
+        points_x = group_center - bar_gap / 2 - bar_width
+        position_x = group_center + bar_gap / 2
+        points_y = baseline_y - points_bar_height
+        position_y = baseline_y - position_bar_height
+
+        bars.append(
+            f'<rect x="{points_x:.1f}" y="{points_y:.1f}" width="{bar_width:.1f}" height="{points_bar_height:.1f}" rx="7" fill="#2563eb" />'
+        )
+        bars.append(
+            f'<rect x="{position_x:.1f}" y="{position_y:.1f}" width="{bar_width:.1f}" height="{position_bar_height:.1f}" rx="7" fill="#f97316" />'
+        )
+
+        value_labels.append(
+            f'<text x="{(points_x + bar_width / 2):.1f}" y="{max(20.0, points_y - 10):.1f}" text-anchor="middle" font-size="16" font-weight="600" fill="#1e3a8a">{points_value:.0f} Pts</text>'
+        )
+        pos_label = f"Pos. {int(position_value)}" if position_value is not None else "Pos. -"
+        value_labels.append(
+            f'<text x="{(position_x + bar_width / 2):.1f}" y="{max(20.0, position_y - 10):.1f}" text-anchor="middle" font-size="16" font-weight="600" fill="#c2410c">{pos_label}</text>'
+        )
+
+        date_text = escape(str(event.get("event_date", "")))
+        location_text = escape(str(event.get("location", ""))[:18])
+        labels.append(
+            f'<text x="{group_center:.1f}" y="{baseline_y + 28:.1f}" text-anchor="middle" font-size="16" font-weight="600" fill="#111827">{date_text}</text>'
+            f'<text x="{group_center:.1f}" y="{baseline_y + 48:.1f}" text-anchor="middle" font-size="14" fill="#6b7280">{location_text}</text>'
+        )
+
+    svg = f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <g opacity="0.95">{''.join(grid_lines)}</g>
+  <g>{''.join(x_axis)}</g>
+  <g>{''.join(bars)}</g>
+  <g>{''.join(value_labels)}</g>
+  <g>{''.join(labels)}</g>
 </svg>
 '''
 
@@ -852,7 +1149,31 @@ def get_team_profile_report(
         "puzzle_average": averages_result["puzzle_average"],
         "puzzle_max_points": TEAM_REPORT_PUZZLE_MAX_POINTS,
     }
+    puzzle_ranking = get_team_puzzle_ranking(team_name, year, min_events=min_events, db_path=db_path)
+    radar_position_render_input = {
+        **radar_result,
+        "puzzle_position": puzzle_ranking["position"],
+        "puzzle_total_teams": puzzle_ranking["total_teams"],
+    }
+    event_chart_render_input = {
+        "team_name": season_result["team_name"],
+        "year": year,
+        "season_events": season_result["events"],
+        "position_axis_max": float(championship["teams_count"] or 1),
+        "points_axis_min": 30.0,
+    }
+
+    with _connect(db_path) as conn:
+        best_total_row = conn.execute(
+            """
+            SELECT MAX(total) AS max_total
+            FROM quiz_teams
+            WHERE total IS NOT NULL
+            """
+        ).fetchone()
+    event_chart_render_input["points_axis_max"] = float(best_total_row["max_total"]) if best_total_row and best_total_row["max_total"] is not None else 30.0
     radar_svg_path = render_team_report_radar_svg(radar_render_input)
+    radar_position_svg_path = render_team_report_position_radar_svg(radar_position_render_input)
 
     events = season_result["events"]
     total_points = sum(event["total_points"] or 0 for event in events)
@@ -890,6 +1211,8 @@ def get_team_profile_report(
         "best_bonus_category": best_bonus_category,
         "best_result": best_result,
         "radar_svg_path": radar_svg_path,
+        "radar_position_svg_path": radar_position_svg_path,
+        "event_chart_svg_path": render_team_report_event_bars_svg(event_chart_render_input),
         "season_events": events,
         "radar_rounds": radar_result["rounds"],
         "puzzle_average": averages_result["puzzle_average"],
