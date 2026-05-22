@@ -12,6 +12,20 @@ from team_aliases import TEAM_NAME_ALIASES
 
 DB_PATH_DEFAULT = os.path.join("data", "quiz_results.db")
 
+TEAM_REPORT_ROUND_MAX_POINTS = {
+    "Allgemeinwissen": 5,
+    "Geographie": 5,
+    "Entertainment": 5,
+    "Sport": 5,
+    "Linz/OÖ": 5,
+    "Geschichte": 5,
+    "Bilderrunde": 10,
+    "Interessantes": 6,
+    "Überraschung": 5,
+    "Musik": 5,
+}
+TEAM_REPORT_PUZZLE_MAX_POINTS = 10
+
 
 def _connect(db_path: str):
     conn = sqlite3.connect(db_path)
@@ -680,6 +694,110 @@ def render_team_radar_svg(result: Dict, output_path: Optional[str] = None) -> st
     return str(target_path)
 
 
+def render_team_report_radar_svg(result: Dict, output_path: Optional[str] = None) -> str:
+    """Render a minimalist radar plot for team reports (avg points only)."""
+    rounds = result["rounds"]
+    if not rounds:
+        raise ValueError("No round data available for radar rendering.")
+
+    axes = []
+    for row in rounds:
+        axis_max = TEAM_REPORT_ROUND_MAX_POINTS.get(row["round_name"], 5)
+        axes.append(
+            {
+                "name": row["round_name"],
+                "avg_points": row["avg_points"],
+                "axis_max": axis_max,
+            }
+        )
+
+    axes.append(
+        {
+            "name": "Puzzle",
+            "avg_points": result.get("puzzle_average"),
+            "axis_max": result.get("puzzle_max_points", TEAM_REPORT_PUZZLE_MAX_POINTS),
+        }
+    )
+
+    avg_values = [float(axis["avg_points"]) for axis in axes if axis["avg_points"] is not None]
+    if not avg_values:
+        raise ValueError("No average round points available for radar rendering.")
+
+    target_path = _radar_output_path(result["team_name"], result["year"], output_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    width = 980
+    height = 980
+    center_x = width / 2
+    center_y = height / 2
+    radius = 320
+    ring_count = 5
+
+    def polar_point(normalized_value: float, angle: float):
+        normalized = max(0.0, min(1.0, normalized_value))
+        distance = radius * normalized
+        return center_x + math.cos(angle) * distance, center_y + math.sin(angle) * distance
+
+    def full_radius_point(angle: float):
+        return center_x + math.cos(angle) * radius, center_y + math.sin(angle) * radius
+
+    count = len(axes)
+    polygon_points = []
+    labels = []
+    spokes = []
+
+    for index, axis in enumerate(axes):
+        angle = -math.pi / 2 + (2 * math.pi * index / count)
+        avg_points = float(axis["avg_points"] or 0.0)
+        axis_max = float(axis["axis_max"]) if axis["axis_max"] else 1.0
+        normalized_points = avg_points / axis_max if axis_max else 0.0
+        px, py = polar_point(normalized_points, angle)
+        polygon_points.append((px, py))
+
+        sx, sy = full_radius_point(angle)
+        spokes.append(
+            f'<line x1="{center_x:.1f}" y1="{center_y:.1f}" x2="{sx:.1f}" y2="{sy:.1f}" stroke="#d6dbe6" stroke-width="1" />'
+        )
+
+        lx, ly = center_x + math.cos(angle) * (radius + 52), center_y + math.sin(angle) * (radius + 52)
+        value_text = "-" if axis["avg_points"] is None else f"{avg_points:.2f} Pts"
+        labels.append(
+            f'<text x="{lx:.1f}" y="{ly - 8:.1f}" text-anchor="middle" font-size="17" font-weight="600" fill="#1f2937">{escape(axis["name"])}</text>'
+            f'<text x="{lx:.1f}" y="{ly + 13:.1f}" text-anchor="middle" font-size="13" fill="#4b5563">{escape(value_text)}</text>'
+        )
+
+    rings = []
+    for step in range(1, ring_count + 1):
+        ring_radius = radius * step / ring_count
+        rings.append(
+            f'<circle cx="{center_x:.1f}" cy="{center_y:.1f}" r="{ring_radius:.1f}" fill="none" stroke="#d6dbe6" stroke-width="1" />'
+        )
+
+    points_text = " ".join(f"{x:.1f},{y:.1f}" for x, y in polygon_points)
+    markers = "\n".join(
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4.5" fill="#2563eb" stroke="#ffffff" stroke-width="2" />'
+        for x, y in polygon_points
+    )
+
+    svg = f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <g opacity="0.95">
+    {''.join(rings)}
+    {''.join(spokes)}
+  </g>
+  <polygon points="{points_text}" fill="#2563eb" fill-opacity="0.18" stroke="#2563eb" stroke-width="3" />
+  {markers}
+  <g>
+    {''.join(labels)}
+  </g>
+</svg>
+'''
+
+    target_path.write_text(svg, encoding="utf-8")
+    return str(target_path)
+
+
 def print_team_radar_report(
     team_name: str,
     year: int,
@@ -729,7 +847,12 @@ def get_team_profile_report(
     averages_result = get_team_round_averages(team_name, year, db_path)
     championship = get_championship_standings(year, db_path)
     radar_result = get_team_radar_report(team_name, year, min_events=min_events, db_path=db_path)
-    radar_svg_path = render_team_radar_svg(radar_result)
+    radar_render_input = {
+        **radar_result,
+        "puzzle_average": averages_result["puzzle_average"],
+        "puzzle_max_points": TEAM_REPORT_PUZZLE_MAX_POINTS,
+    }
+    radar_svg_path = render_team_report_radar_svg(radar_render_input)
 
     events = season_result["events"]
     total_points = sum(event["total_points"] or 0 for event in events)
@@ -769,6 +892,8 @@ def get_team_profile_report(
         "radar_svg_path": radar_svg_path,
         "season_events": events,
         "radar_rounds": radar_result["rounds"],
+        "puzzle_average": averages_result["puzzle_average"],
+        "puzzle_max_points": TEAM_REPORT_PUZZLE_MAX_POINTS,
         "round_averages": averages_result["round_averages"],
     }
 

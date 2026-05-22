@@ -467,19 +467,54 @@ class ReportsTab(QWidget):
                     continue
 
     def _insert_radar_into_docx(self, document, radar_png_path: str) -> bool:
-        from docx.shared import Inches
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Emu, Inches
 
-        token = "{RadarPlot}"
-        for paragraph in self._iter_docx_paragraphs(document):
-            found = False
-            while self._replace_placeholder_in_paragraph(paragraph, token, ""):
-                found = True
+        if len(document.tables) < 2:
+            return False
 
-            if found:
-                run = paragraph.add_run()
-                run.add_picture(radar_png_path, width=Inches(6.2))
-                return True
-        return False
+        table = document.tables[1]
+        if len(table.rows) < 1 or len(table.columns) < 1:
+            return False
+
+        cell = table.cell(0, 0)
+        preserved_width = None
+        preserved_height = None
+        preserved_alignment = None
+
+        # Reuse dimensions of the existing image in this cell, if present.
+        for paragraph in cell.paragraphs:
+            if preserved_alignment is None:
+                preserved_alignment = paragraph.alignment
+
+            for run in paragraph.runs:
+                extents = run._r.xpath(".//wp:inline/wp:extent")
+                if not extents:
+                    extents = run._r.xpath(".//wp:anchor/wp:extent")
+                if extents:
+                    extent = extents[0]
+                    cx = extent.get("cx")
+                    cy = extent.get("cy")
+                    if cx and cy:
+                        preserved_width = Emu(int(cx))
+                        preserved_height = Emu(int(cy))
+                        break
+            if preserved_width is not None and preserved_height is not None:
+                break
+
+        cell.text = ""
+        paragraph = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
+        paragraph.alignment = preserved_alignment or WD_ALIGN_PARAGRAPH.CENTER
+
+        run = paragraph.add_run()
+        if preserved_width is not None and preserved_height is not None:
+            run.add_picture(radar_png_path, width=preserved_width, height=preserved_height)
+        elif cell.width:
+            run.add_picture(radar_png_path, width=int(cell.width * 0.92))
+        else:
+            run.add_picture(radar_png_path, width=Inches(5.8))
+
+        return True
 
     def _convert_docx_to_pdf(self, docx_path: str, pdf_path: str) -> None:
         converter = detect_office_converter()
@@ -534,7 +569,7 @@ class ReportsTab(QWidget):
             self._replace_docx_placeholders(document, values)
             inserted = self._insert_radar_into_docx(document, str(tmp_png))
             if not inserted:
-                raise RuntimeError("Placeholder {RadarPlot} not found in DOCX template.")
+                raise RuntimeError("Could not place radar plot in second table, top-left cell.")
 
             document.save(str(tmp_docx))
             self._convert_docx_to_pdf(str(tmp_docx), output_pdf_path)
