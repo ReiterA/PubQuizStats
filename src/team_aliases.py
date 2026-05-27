@@ -27,5 +27,7 @@ TEAM_NAME_ALIASES = {
 
     "Quiz(n)losen": "Die Quiz(n)losen",
 
-    "Und am letzten Platz*": "Und am letzten Platz"
+    "Und am letzten Platz*": "Und am letzten Platz",
+
+    "Wigl Wogl": "Wiglwogl"
 }

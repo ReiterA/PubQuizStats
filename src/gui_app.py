@@ -187,6 +187,7 @@ class ReportsTab(QWidget):
                 "team",
                 "averages",
                 "radar",
+                "bonus-efficiency",
                 "consistency",
                 "difficulty",
                 "event-difficulty",
@@ -387,6 +388,7 @@ class ReportsTab(QWidget):
             "DateBestPoints": "-" if best_result is None else best_result["event_date"],
             "LocBestPoints": "-" if best_result is None else best_result["location"],
             "AvgPoints": "-" if report["average_points"] is None else f"{report['average_points']:.2f}",
+            "BonusEff": "-" if report.get("bonus_efficiency_avg") is None else f"{report['bonus_efficiency_avg'] * 100:.1f}%",
             "BestCat": "-" if best_category is None else best_category["round_name"],
             "BestCatPos": "-" if best_category is None else str(best_category["position"]),
             "nTeams": "-" if best_category is None else str(best_category["total_teams"]),
@@ -745,6 +747,13 @@ class ReportsTab(QWidget):
                     self.year.value(),
                     self.min_events.value(),
                     None,
+                    db,
+                )
+            elif report == "bonus-efficiency":
+                text = self._capture(
+                    db_report.print_team_bonus_efficiency_report,
+                    self.team.text().strip(),
+                    self.year.value(),
                     db,
                 )
             elif report == "consistency":

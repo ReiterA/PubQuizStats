@@ -27,6 +27,25 @@ TEAM_REPORT_ROUND_MAX_POINTS = {
 TEAM_REPORT_PUZZLE_MAX_POINTS = 10
 
 
+def _bonus_points_from_normal_points(round_name: str, normal_points: float) -> float:
+    """Return potential bonus points for one round from its normal points."""
+    points = max(0.0, float(normal_points))
+    if round_name in {"Bilderrunde", "Puzzle"}:
+        return 0.0
+
+    if round_name == "Überraschung":
+        # Rule requested by user:
+        # 6->5, 5->4, 4->3, 3->2, 2->1, 1->1, 0->0
+        rounded = int(points)
+        if rounded <= 0:
+            return 0.0
+        if rounded <= 2:
+            return 1.0
+        return float(min(5, rounded - 1))
+
+    return points
+
+
 def _connect(db_path: str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -297,9 +316,10 @@ def get_team_season_results(team_name: str, year: int, db_path: str = DB_PATH_DE
         all_rows = conn.execute(
             """
             SELECT
-                e.id,
+                e.id AS event_id,
                 e.event_date,
                 e.location,
+                t.id AS team_id,
                 t.team_name,
                 t.team_rank,
                 t.total,
@@ -319,7 +339,7 @@ def get_team_season_results(team_name: str, year: int, db_path: str = DB_PATH_DE
             if _canonical_team_name(row["team_name"]) != canonical_team:
                 continue
 
-            event_id = row["id"]
+            event_id = row["event_id"]
             candidate = dict(row)
             existing = results_by_event.get(event_id)
             if existing is None:
@@ -346,12 +366,14 @@ def get_team_season_results(team_name: str, year: int, db_path: str = DB_PATH_DE
                 FROM quiz_teams
                 WHERE event_id = ?
                 """,
-                (row["id"],),
+                (row["event_id"],),
             ).fetchone()["max_total"]
             
             percentage = (row["total"] / winner_total * 100) if winner_total else 0
             
             events_data.append({
+                "event_id": row["event_id"],
+                "team_id": row["team_id"],
                 "event_date": row["event_date"],
                 "location": row["location"],
                 "position": rank,
@@ -1114,6 +1136,115 @@ def print_team_radar_report(
     print(f"Radar plot saved to: {svg_path}")
 
 
+def get_team_bonus_efficiency_report(
+    team_name: str,
+    year: int,
+    db_path: str = DB_PATH_DEFAULT,
+) -> Dict:
+    """Return per-event bonus efficiency and average for one team."""
+    season_result = get_team_season_results(team_name, year, db_path)
+    events = season_result["events"]
+
+    team_ids = [event["team_id"] for event in events if event.get("team_id") is not None]
+    score_rows: Dict[int, List[sqlite3.Row]] = {}
+    if team_ids:
+        placeholders = ",".join("?" * len(team_ids))
+        with _connect(db_path) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT team_id, round_name, points
+                FROM team_scores
+                WHERE team_id IN ({placeholders})
+                """,
+                team_ids,
+            ).fetchall()
+        for row in rows:
+            score_rows.setdefault(row["team_id"], []).append(row)
+
+    result_events = []
+    efficiency_values = []
+
+    for event in events:
+        selected_bonus_round = (event.get("bonus_round") or "").strip()
+        rows_for_team = score_rows.get(event.get("team_id"), [])
+
+        possible_candidates = []
+        achieved_bonus_points = 0.0
+
+        for row in rows_for_team:
+            round_name = str(row["round_name"])
+            raw_points = row["points"]
+            if raw_points is None:
+                continue
+
+            observed_points = max(0.0, float(raw_points))
+            if selected_bonus_round and round_name.casefold() == selected_bonus_round.casefold():
+                observed_points = float(math.floor(observed_points / 2.0))
+                achieved_bonus_points = observed_points
+
+            possible_candidates.append(_bonus_points_from_normal_points(round_name, observed_points))
+
+        possible_bonus_points = max(possible_candidates) if possible_candidates else 0.0
+        bonus_efficiency = None
+        if possible_bonus_points > 0.0:
+            bonus_efficiency = achieved_bonus_points / possible_bonus_points
+            efficiency_values.append(bonus_efficiency)
+
+        result_events.append(
+            {
+                **event,
+                "achieved_bonus_points": achieved_bonus_points,
+                "possible_bonus_points": possible_bonus_points,
+                "bonus_efficiency": bonus_efficiency,
+            }
+        )
+
+    average_bonus_efficiency = (
+        sum(efficiency_values) / len(efficiency_values) if efficiency_values else None
+    )
+
+    return {
+        "team_name": season_result["team_name"],
+        "year": year,
+        "events": result_events,
+        "average_bonus_efficiency": average_bonus_efficiency,
+    }
+
+
+def print_team_bonus_efficiency_report(
+    team_name: str,
+    year: int,
+    db_path: str = DB_PATH_DEFAULT,
+) -> None:
+    """Print per-event bonus efficiency and its average for one team."""
+    result = get_team_bonus_efficiency_report(team_name, year, db_path)
+    events = result["events"]
+
+    print(f"Bonus efficiency report for {result['team_name']} ({result['year']})")
+    print()
+
+    if not events:
+        print("No events found for this team in this year.")
+        return
+
+    print(f"{'Date':10}  {'Location':20}  {'Bonus Round':14}  {'Achieved':>8}  {'Possible':>8}  {'Eff':>7}")
+    print("""----------  --------------------  --------------  --------  --------  -------""")
+
+    for event in events:
+        efficiency = event["bonus_efficiency"]
+        efficiency_text = "-" if efficiency is None else f"{efficiency * 100:6.1f}%"
+        print(
+            f"{event['event_date']:10}  {event['location'][:20]:20}  {(event.get('bonus_round') or '-')[:14]:14}  {event['achieved_bonus_points']:>8.1f}  {event['possible_bonus_points']:>8.1f}  {efficiency_text:>7}"
+        )
+
+    print("""----------  --------------------  --------------  --------  --------  -------""")
+    average = result["average_bonus_efficiency"]
+    if average is None:
+        print("Average bonus efficiency: -")
+    else:
+        print(f"Average bonus efficiency: {average * 100:.1f}%")
+
+
 def get_team_profile_report(
     team_name: str,
     year: int,
@@ -1156,10 +1287,13 @@ def get_team_profile_report(
     radar_svg_path = render_team_report_radar_svg(radar_render_input)
     radar_position_svg_path = render_team_report_position_radar_svg(radar_position_render_input)
 
-    events = season_result["events"]
+    bonus_efficiency_result = get_team_bonus_efficiency_report(team_name, year, db_path)
+    events = bonus_efficiency_result["events"]
+
     total_points = sum(event["total_points"] or 0 for event in events)
     participation_count = len(events)
     average_points = (total_points / participation_count) if participation_count else None
+    average_bonus_efficiency = bonus_efficiency_result["average_bonus_efficiency"]
 
     best_result = None
     if events:
@@ -1189,6 +1323,7 @@ def get_team_profile_report(
         "championship_points": championship_points,
         "championship_place": championship_place,
         "average_points": average_points,
+        "bonus_efficiency_avg": average_bonus_efficiency,
         "best_bonus_category": best_bonus_category,
         "best_result": best_result,
         "radar_svg_path": radar_svg_path,
