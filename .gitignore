@@ -13,3 +13,13 @@ wheels/
 tmp/
 data/tmp/
 
+# Program/editor temporary files
+~$*
+.~lock.*#
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*.orig
+
