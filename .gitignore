@@ -9,3 +9,7 @@ wheels/
 # Virtual environments
 .venv
 
+# Temporary output folders
+tmp/
+data/tmp/
+
