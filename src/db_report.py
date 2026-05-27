@@ -508,6 +508,56 @@ def get_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_DE
         }
 
 
+def get_overall_round_averages(year: int, db_path: str = DB_PATH_DEFAULT) -> Dict:
+    """Return average round points across all teams in the given year."""
+    year_prefix = f"{year:04d}-%"
+
+    with _connect(db_path) as conn:
+        round_rows = conn.execute(
+            """
+            SELECT
+                ts.round_name,
+                AVG(
+                    CASE
+                        WHEN ts.round_name = qt.bonus_round THEN
+                            CASE
+                                WHEN ts.points % 2 = 0 THEN ts.points / 2
+                                ELSE (ts.points - 1) / 2
+                            END
+                        ELSE ts.points
+                    END
+                ) AS avg_points
+            FROM team_scores ts
+            JOIN quiz_teams qt ON ts.team_id = qt.id
+            JOIN quiz_events e ON qt.event_id = e.id
+            WHERE e.event_date LIKE ?
+            GROUP BY ts.round_name
+            """,
+            (year_prefix,),
+        ).fetchall()
+
+        puzzle_row = conn.execute(
+            """
+            SELECT AVG(qt.puzzle_points) AS avg_puzzle
+            FROM quiz_teams qt
+            JOIN quiz_events e ON qt.event_id = e.id
+            WHERE e.event_date LIKE ?
+              AND qt.puzzle_points IS NOT NULL
+            """,
+            (year_prefix,),
+        ).fetchone()
+
+    return {
+        "year": year,
+        "round_averages": {
+            row["round_name"]: float(row["avg_points"])
+            for row in round_rows
+            if row["avg_points"] is not None
+        },
+        "puzzle_average": None if puzzle_row is None else puzzle_row["avg_puzzle"],
+    }
+
+
 def get_team_radar_report(
     team_name: str,
     year: int,
@@ -797,6 +847,9 @@ def render_team_report_radar_svg(result: Dict, output_path: Optional[str] = None
         }
     )
 
+    overall_round_averages = result.get("overall_round_averages", {}) or {}
+    overall_puzzle_average = result.get("overall_puzzle_average")
+
     avg_values = [float(axis["avg_points"]) for axis in axes if axis["avg_points"] is not None]
     if not avg_values:
         raise ValueError("No average round points available for radar rendering.")
@@ -821,6 +874,7 @@ def render_team_report_radar_svg(result: Dict, output_path: Optional[str] = None
 
     count = len(axes)
     polygon_points = []
+    overall_polygon_points = []
     labels = []
     spokes = []
 
@@ -831,6 +885,14 @@ def render_team_report_radar_svg(result: Dict, output_path: Optional[str] = None
         normalized_points = avg_points / axis_max if axis_max else 0.0
         px, py = polar_point(normalized_points, angle)
         polygon_points.append((px, py))
+
+        if axis["name"] == "Puzzle":
+            overall_value = overall_puzzle_average
+        else:
+            overall_value = overall_round_averages.get(axis["name"])
+        overall_normalized = (float(overall_value) / axis_max) if (overall_value is not None and axis_max) else 0.0
+        ox, oy = polar_point(overall_normalized, angle)
+        overall_polygon_points.append((ox, oy))
 
         sx, sy = full_radius_point(angle)
         spokes.append(
@@ -852,6 +914,7 @@ def render_team_report_radar_svg(result: Dict, output_path: Optional[str] = None
         )
 
     points_text = " ".join(f"{x:.1f},{y:.1f}" for x, y in polygon_points)
+    overall_points_text = " ".join(f"{x:.1f},{y:.1f}" for x, y in overall_polygon_points)
     markers = "\n".join(
         f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4.5" fill="#2563eb" stroke="#ffffff" stroke-width="2" />'
         for x, y in polygon_points
@@ -864,6 +927,7 @@ def render_team_report_radar_svg(result: Dict, output_path: Optional[str] = None
     {''.join(rings)}
     {''.join(spokes)}
   </g>
+    <polygon points="{overall_points_text}" fill="none" stroke="#7dd3fc" stroke-width="2.5" stroke-dasharray="10 8" />
   <polygon points="{points_text}" fill="#2563eb" fill-opacity="0.18" stroke="#2563eb" stroke-width="3" />
   {markers}
   <g>
@@ -1254,12 +1318,15 @@ def get_team_profile_report(
     """Return a consolidated team profile summary with radar chart output."""
     season_result = get_team_season_results(team_name, year, db_path)
     averages_result = get_team_round_averages(team_name, year, db_path)
+    overall_averages_result = get_overall_round_averages(year, db_path)
     championship = get_championship_standings(year, db_path)
     radar_result = get_team_radar_report(team_name, year, min_events=min_events, db_path=db_path)
     radar_render_input = {
         **radar_result,
         "puzzle_average": averages_result["puzzle_average"],
         "puzzle_max_points": TEAM_REPORT_PUZZLE_MAX_POINTS,
+        "overall_round_averages": overall_averages_result["round_averages"],
+        "overall_puzzle_average": overall_averages_result["puzzle_average"],
     }
     puzzle_ranking = get_team_puzzle_ranking(team_name, year, min_events=min_events, db_path=db_path)
     radar_position_render_input = {
