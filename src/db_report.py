@@ -786,7 +786,7 @@ def render_team_report_radar_svg(result: Dict, output_path: Optional[str] = None
     height = 980
     center_x = width / 2
     center_y = height / 2
-    radius = 320
+    radius = 360
     ring_count = 5
 
     def polar_point(normalized_value: float, angle: float):
@@ -815,7 +815,7 @@ def render_team_report_radar_svg(result: Dict, output_path: Optional[str] = None
             f'<line x1="{center_x:.1f}" y1="{center_y:.1f}" x2="{sx:.1f}" y2="{sy:.1f}" stroke="#d6dbe6" stroke-width="1" />'
         )
 
-        lx, ly = center_x + math.cos(angle) * (radius + 52), center_y + math.sin(angle) * (radius + 52)
+        lx, ly = center_x + math.cos(angle) * (radius + 38), center_y + math.sin(angle) * (radius + 38)
         value_text = "-" if axis["avg_points"] is None else f"{avg_points:.2f} Pts"
         labels.append(
             f'<text x="{lx:.1f}" y="{ly - 8:.1f}" text-anchor="middle" font-size="21" font-weight="600" fill="#1f2937">{escape(axis["name"])}</text>'
@@ -882,7 +882,7 @@ def render_team_report_position_radar_svg(result: Dict, output_path: Optional[st
     height = 980
     center_x = width / 2
     center_y = height / 2
-    radius = 320
+    radius = 360
     ring_count = 5
 
     def polar_point(normalized_value: float, angle: float):
@@ -921,7 +921,7 @@ def render_team_report_position_radar_svg(result: Dict, output_path: Optional[st
             f'<line x1="{center_x:.1f}" y1="{center_y:.1f}" x2="{sx:.1f}" y2="{sy:.1f}" stroke="#d6dbe6" stroke-width="1" />'
         )
 
-        lx, ly = center_x + math.cos(angle) * (radius + 52), center_y + math.sin(angle) * (radius + 52)
+        lx, ly = center_x + math.cos(angle) * (radius + 38), center_y + math.sin(angle) * (radius + 38)
         labels.append(
             f'<text x="{lx:.1f}" y="{ly - 8:.1f}" text-anchor="middle" font-size="21" font-weight="600" fill="#1f2937">{escape(row["round_name"])}</text>'
             f'<text x="{lx:.1f}" y="{ly + 13:.1f}" text-anchor="middle" font-size="17" fill="#4b5563">{escape(pos_text)}</text>'
@@ -1057,8 +1057,8 @@ def render_team_report_event_bars_svg(result: Dict, output_path: Optional[str] =
             location_raw = "Bastards"
         location_text = escape(location_raw[:18])
         labels.append(
-            f'<text x="{group_center:.1f}" y="{baseline_y + 58:.1f}" text-anchor="end" font-size="18" font-weight="600" fill="#111827" transform="rotate(-90 {group_center:.1f} {baseline_y + 58:.1f})">{date_text}</text>'
-            f'<text x="{group_center + 22:.1f}" y="{baseline_y + 58:.1f}" text-anchor="end" font-size="16" fill="#6b7280" transform="rotate(-90 {group_center + 22:.1f} {baseline_y + 58:.1f})">{location_text}</text>'
+            f'<text x="{group_center:.1f}" y="{baseline_y + 40:.1f}" text-anchor="end" font-size="18" font-weight="600" fill="#111827" transform="rotate(-90 {group_center:.1f} {baseline_y + 40:.1f})">{date_text}</text>'
+            f'<text x="{group_center + 22:.1f}" y="{baseline_y + 40:.1f}" text-anchor="end" font-size="16" fill="#6b7280" transform="rotate(-90 {group_center + 22:.1f} {baseline_y + 40:.1f})">{location_text}</text>'
         )
 
     svg = f'''<?xml version="1.0" encoding="UTF-8"?>

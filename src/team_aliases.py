@@ -26,4 +26,6 @@ TEAM_NAME_ALIASES = {
     "katzbach": "Katzbach",
 
     "Quiz(n)losen": "Die Quiz(n)losen",
+
+    "Und am letzten Platz*": "Und am letzten Platz"
 }
