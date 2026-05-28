@@ -184,6 +184,7 @@ class ReportsTab(QWidget):
                 "list",
                 "result",
                 "standings",
+                "leaders",
                 "team",
                 "averages",
                 "radar",
@@ -374,6 +375,10 @@ class ReportsTab(QWidget):
         if year_events_count is None:
             year_events_count = len(events)
 
+        first_places = sum(1 for event in events if event.get("position") == 1)
+        second_places = sum(1 for event in events if event.get("position") == 2)
+        third_places = sum(1 for event in events if event.get("position") == 3)
+
         return {
             "Date": datetime.now().strftime("%d.%m.%Y"),
             "YEAR": str(report["year"]),
@@ -384,9 +389,9 @@ class ReportsTab(QWidget):
             "BestPos": "-" if best_pos_event is None else str(best_pos_event["position"]),
             "DateBestPos": "-" if best_pos_event is None else best_pos_event["event_date"],
             "LocBestPos": "-" if best_pos_event is None else best_pos_event["location"],
-            "BestPoints": "-" if best_result is None else str(best_result["total_points"]),
-            "DateBestPoints": "-" if best_result is None else best_result["event_date"],
-            "LocBestPoints": "-" if best_result is None else best_result["location"],
+            "BestPts": "-" if best_result is None else str(best_result["total_points"]),
+            "DateBestPts": "-" if best_result is None else best_result["event_date"],
+            "LocBestPts": "-" if best_result is None else best_result["location"],
             "AvgPoints": "-" if report["average_points"] is None else f"{report['average_points']:.2f}",
             "BonusEff": "-" if report.get("bonus_efficiency_avg") is None else f"{report['bonus_efficiency_avg'] * 100:.1f}%",
             "BestCat": "-" if best_category is None else best_category["round_name"],
@@ -394,6 +399,9 @@ class ReportsTab(QWidget):
             "nTeams": "-" if best_category is None else str(best_category["total_teams"]),
             "Participations": str(report["participation_count"]),
             "nRoundsPlayed": str(year_events_count),
+            "1": str(first_places),
+            "2": str(second_places),
+            "3": str(third_places),
         }
 
     def _iter_docx_paragraphs(self, document):
@@ -491,6 +499,71 @@ class ReportsTab(QWidget):
             for paragraph in self._iter_docx_paragraphs(document):
                 while self._replace_placeholder_in_paragraph(paragraph, token, replacement):
                     continue
+
+            # Also replace placeholders inside text boxes/shapes where python-docx
+            # does not expose paragraphs through document.paragraphs/tables.
+            self._replace_placeholder_in_xml_text_nodes(document.part.element, token, replacement)
+            for section in document.sections:
+                self._replace_placeholder_in_xml_text_nodes(section.header.part.element, token, replacement)
+                self._replace_placeholder_in_xml_text_nodes(section.footer.part.element, token, replacement)
+
+    def _replace_placeholder_in_xml_text_nodes(self, root_element, placeholder: str, value: str) -> None:
+        # Replace within WordprocessingML paragraphs (handles split runs like "{" + "2}").
+        for paragraph in root_element.xpath(".//w:p"):
+            text_nodes = paragraph.xpath(".//w:t")
+            if not text_nodes:
+                continue
+            while self._replace_placeholder_across_text_nodes(text_nodes, placeholder, value):
+                pass
+
+        # Also handle DrawingML text (e.g. grouped shapes/text boxes using a:t).
+        for paragraph in root_element.xpath(".//a:p"):
+            text_nodes = paragraph.xpath(".//a:t")
+            if not text_nodes:
+                continue
+            while self._replace_placeholder_across_text_nodes(text_nodes, placeholder, value):
+                pass
+
+    def _replace_placeholder_across_text_nodes(self, text_nodes, placeholder: str, value: str) -> bool:
+        """Replace one placeholder occurrence across XML text nodes while preserving layout."""
+        run_texts = [node.text or "" for node in text_nodes]
+        full_text = "".join(run_texts)
+        start = full_text.find(placeholder)
+        if start < 0:
+            return False
+        end = start + len(placeholder)
+
+        boundaries = []
+        offset = 0
+        for idx, text in enumerate(run_texts):
+            boundaries.append((idx, offset, offset + len(text)))
+            offset += len(text)
+
+        start_idx = None
+        end_idx = None
+        for idx, b_start, b_end in boundaries:
+            if start_idx is None and b_start <= start < b_end:
+                start_idx = idx
+            if b_start < end <= b_end:
+                end_idx = idx
+                break
+
+        if start_idx is None or end_idx is None:
+            return False
+
+        start_node = text_nodes[start_idx]
+        end_node = text_nodes[end_idx]
+        start_local = start - boundaries[start_idx][1]
+        end_local = end - boundaries[end_idx][1]
+
+        prefix = (start_node.text or "")[:start_local]
+        suffix = (end_node.text or "")[end_local:]
+        start_node.text = prefix + value + suffix
+
+        for idx in range(start_idx + 1, end_idx + 1):
+            text_nodes[idx].text = ""
+
+        return True
 
     def _replace_image_in_cell(self, cell, image_path: str) -> bool:
         from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -736,6 +809,8 @@ class ReportsTab(QWidget):
                 text = self._capture(db_report.print_event_results, **kwargs_event)
             elif report == "standings":
                 text = self._capture(db_report.print_championship_standings, self.year.value(), db)
+            elif report == "leaders":
+                text = self._capture(db_report.print_leaders_report, self.year.value(), self.min_events.value(), db)
             elif report == "team":
                 text = self._capture(db_report.print_team_season_results, self.team.text().strip(), self.year.value(), db)
             elif report == "averages":

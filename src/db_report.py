@@ -1946,6 +1946,364 @@ def print_round_strength_ranking(
         print()
 
 
+def _get_puzzle_leaderboard(
+    year: int,
+    min_events: int = 2,
+    db_path: str = DB_PATH_DEFAULT,
+) -> List[Dict]:
+    """Return puzzle average ranking across teams for one year."""
+    year_prefix = f"{year:04d}-%"
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                qt.team_name,
+                qt.event_id,
+                qt.puzzle_points
+            FROM quiz_teams qt
+            JOIN quiz_events e ON e.id = qt.event_id
+            WHERE e.event_date LIKE ?
+              AND qt.puzzle_points IS NOT NULL
+            """,
+            (year_prefix,),
+        ).fetchall()
+
+    by_team: Dict[str, Dict[int, float]] = {}
+    for row in rows:
+        team = _canonical_team_name(row["team_name"])
+        event_id = row["event_id"]
+        value = float(row["puzzle_points"])
+        by_team.setdefault(team, {})
+
+        # If aliases appear multiple times in one event, keep the better puzzle score.
+        previous = by_team[team].get(event_id)
+        if previous is None or value > previous:
+            by_team[team][event_id] = value
+
+    ranking = []
+    for team_name, per_event in by_team.items():
+        values = list(per_event.values())
+        events = len(values)
+        if events < min_events:
+            continue
+        avg_points = sum(values) / events
+        ranking.append(
+            {
+                "team_name": team_name,
+                "avg_points": avg_points,
+                "events": events,
+            }
+        )
+
+    ranking.sort(key=lambda row: (-row["avg_points"], -row["events"], row["team_name"].lower()))
+    return ranking
+
+
+def _get_points_average_leaderboard(
+    year: int,
+    min_events: int = 2,
+    db_path: str = DB_PATH_DEFAULT,
+) -> List[Dict]:
+    """Return average total-points leaderboard across teams for one year."""
+    year_prefix = f"{year:04d}-%"
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                qt.team_name,
+                qt.event_id,
+                qt.total,
+                qt.team_rank
+            FROM quiz_teams qt
+            JOIN quiz_events e ON e.id = qt.event_id
+            WHERE e.event_date LIKE ?
+            """,
+            (year_prefix,),
+        ).fetchall()
+
+    # Keep one canonical row per team/event, preferring better rank then higher score.
+    by_team_event: Dict[str, Dict[int, Dict]] = {}
+    for row in rows:
+        team_name = _canonical_team_name(row["team_name"])
+        event_id = row["event_id"]
+        candidate = {
+            "rank": row["team_rank"] if row["team_rank"] is not None else 9999,
+            "total": float(row["total"] if row["total"] is not None else 0),
+        }
+
+        by_team_event.setdefault(team_name, {})
+        existing = by_team_event[team_name].get(event_id)
+        if existing is None:
+            by_team_event[team_name][event_id] = candidate
+            continue
+
+        if candidate["rank"] < existing["rank"] or (
+            candidate["rank"] == existing["rank"] and candidate["total"] > existing["total"]
+        ):
+            by_team_event[team_name][event_id] = candidate
+
+    ranking = []
+    for team_name, per_event in by_team_event.items():
+        totals = [row["total"] for row in per_event.values()]
+        events = len(totals)
+        if events < min_events:
+            continue
+
+        avg_points = sum(totals) / events
+        ranking.append(
+            {
+                "team_name": team_name,
+                "avg_points": avg_points,
+                "events": events,
+            }
+        )
+
+    ranking.sort(key=lambda row: (-row["avg_points"], -row["events"], row["team_name"].lower()))
+    return ranking
+
+
+def _get_bonus_efficiency_leaderboard(
+    year: int,
+    min_events: int = 2,
+    db_path: str = DB_PATH_DEFAULT,
+) -> List[Dict]:
+    """Return bonus-efficiency leaderboard across teams for one year."""
+    year_prefix = f"{year:04d}-%"
+
+    with _connect(db_path) as conn:
+        team_rows = conn.execute(
+            """
+            SELECT
+                qt.id AS team_id,
+                qt.team_name,
+                qt.event_id,
+                qt.team_rank,
+                qt.total,
+                qt.bonus_round
+            FROM quiz_teams qt
+            JOIN quiz_events e ON e.id = qt.event_id
+            WHERE e.event_date LIKE ?
+            """,
+            (year_prefix,),
+        ).fetchall()
+
+    # Keep one row per canonical team/event for consistent alias handling.
+    selected_by_team_event: Dict[str, Dict[int, Dict]] = {}
+    selected_team_ids = []
+    for row in team_rows:
+        team_name = _canonical_team_name(row["team_name"])
+        event_id = row["event_id"]
+        candidate = {
+            "team_id": row["team_id"],
+            "bonus_round": row["bonus_round"],
+            "rank": row["team_rank"] if row["team_rank"] is not None else 9999,
+            "total": float(row["total"] if row["total"] is not None else 0),
+        }
+
+        selected_by_team_event.setdefault(team_name, {})
+        existing = selected_by_team_event[team_name].get(event_id)
+        if existing is None:
+            selected_by_team_event[team_name][event_id] = candidate
+            selected_team_ids.append(candidate["team_id"])
+            continue
+
+        if candidate["rank"] < existing["rank"] or (
+            candidate["rank"] == existing["rank"] and candidate["total"] > existing["total"]
+        ):
+            selected_team_ids.append(candidate["team_id"])
+            selected_by_team_event[team_name][event_id] = candidate
+
+    score_rows: Dict[int, List[sqlite3.Row]] = {}
+    unique_team_ids = sorted(set(selected_team_ids))
+    if unique_team_ids:
+        placeholders = ",".join("?" * len(unique_team_ids))
+        with _connect(db_path) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT team_id, round_name, points
+                FROM team_scores
+                WHERE team_id IN ({placeholders})
+                """,
+                unique_team_ids,
+            ).fetchall()
+        for row in rows:
+            score_rows.setdefault(row["team_id"], []).append(row)
+
+    leaderboard = []
+    for team_name, per_event in selected_by_team_event.items():
+        efficiencies = []
+
+        for event_row in per_event.values():
+            selected_bonus_round = (event_row.get("bonus_round") or "").strip()
+            rows_for_team = score_rows.get(event_row["team_id"], [])
+
+            possible_candidates = []
+            achieved_bonus_points = 0.0
+
+            for score_row in rows_for_team:
+                round_name = str(score_row["round_name"])
+                raw_points = score_row["points"]
+                if raw_points is None:
+                    continue
+
+                observed_points = max(0.0, float(raw_points))
+                if selected_bonus_round and round_name.casefold() == selected_bonus_round.casefold():
+                    observed_points = float(math.floor(observed_points / 2.0))
+                    achieved_bonus_points = observed_points
+
+                possible_candidates.append(_bonus_points_from_normal_points(round_name, observed_points))
+
+            possible_bonus_points = max(possible_candidates) if possible_candidates else 0.0
+            if possible_bonus_points > 0.0:
+                efficiencies.append(achieved_bonus_points / possible_bonus_points)
+
+        events = len(efficiencies)
+        if events < min_events:
+            continue
+
+        leaderboard.append(
+            {
+                "team_name": team_name,
+                "avg_efficiency": sum(efficiencies) / events,
+                "events": events,
+            }
+        )
+
+    leaderboard.sort(
+        key=lambda row: (-row["avg_efficiency"], -row["events"], row["team_name"].lower())
+    )
+    return leaderboard
+
+
+def get_leaders_report(
+    year: int,
+    min_events: int = 2,
+    db_path: str = DB_PATH_DEFAULT,
+) -> Dict:
+    """Return a leaders summary for championship, averages, bonus efficiency and round categories."""
+    standings = get_championship_standings(year=year, db_path=db_path)
+    championship_leader = standings["standings"][0] if standings["standings"] else None
+
+    points_avg_leaderboard = _get_points_average_leaderboard(
+        year=year,
+        min_events=min_events,
+        db_path=db_path,
+    )
+    points_avg_leader = points_avg_leaderboard[0] if points_avg_leaderboard else None
+
+    bonus_eff_leaderboard = _get_bonus_efficiency_leaderboard(
+        year=year,
+        min_events=min_events,
+        db_path=db_path,
+    )
+    bonus_efficiency_leader = bonus_eff_leaderboard[0] if bonus_eff_leaderboard else None
+
+    round_strength = get_round_strength_ranking(
+        year=year,
+        round_name=None,
+        min_events=min_events,
+        db_path=db_path,
+    )
+    category_leaders = []
+    for block in round_strength["rankings"]:
+        if not block["teams"]:
+            continue
+        best = block["teams"][0]
+        category_leaders.append(
+            {
+                "category_name": block["round_name"],
+                "team_name": best["team_name"],
+                "avg_points": best["avg_points"],
+                "events": best["events"],
+            }
+        )
+
+    puzzle_leaderboard = _get_puzzle_leaderboard(year=year, min_events=min_events, db_path=db_path)
+    puzzle_leader = puzzle_leaderboard[0] if puzzle_leaderboard else None
+    if puzzle_leader is not None:
+        category_leaders.append(
+            {
+                "category_name": "Puzzle",
+                "team_name": puzzle_leader["team_name"],
+                "avg_points": puzzle_leader["avg_points"],
+                "events": puzzle_leader["events"],
+            }
+        )
+
+    return {
+        "year": year,
+        "min_events": min_events,
+        "events_count": standings["events_count"],
+        "teams_count": standings["teams_count"],
+        "championship_leader": championship_leader,
+        "points_average_leader": points_avg_leader,
+        "bonus_efficiency_leader": bonus_efficiency_leader,
+        "category_leaders": category_leaders,
+    }
+
+
+def print_leaders_report(
+    year: int,
+    min_events: int = 2,
+    db_path: str = DB_PATH_DEFAULT,
+) -> None:
+    """Print leaders summary for one year."""
+    result = get_leaders_report(year=year, min_events=min_events, db_path=db_path)
+
+    print(f"Leaders report {result['year']}")
+    print(f"Events: {result['events_count']}")
+    print(f"Teams: {result['teams_count']}")
+    print(f"Minimum events for averages/efficiency/categories: {result['min_events']}")
+    print()
+
+    championship_leader = result["championship_leader"]
+    if championship_leader is None:
+        print("No championship data found for this year.")
+    else:
+        print(
+            "Championship leader: "
+            f"{championship_leader['team_name']} "
+            f"({championship_leader['points']} pts, "
+            f"{championship_leader['events_count']} events, "
+            f"{championship_leader['wins']} wins)"
+        )
+
+    points_leader = result["points_average_leader"]
+    if points_leader is None:
+        print("Best point average: -")
+    else:
+        print(
+            "Best point average: "
+            f"{points_leader['team_name']} "
+            f"({points_leader['avg_points']:.2f} pts/event, {points_leader['events']} events)"
+        )
+
+    bonus_leader = result["bonus_efficiency_leader"]
+    if bonus_leader is None:
+        print("Best bonus efficiency: -")
+    else:
+        print(
+            "Best bonus efficiency: "
+            f"{bonus_leader['team_name']} "
+            f"({bonus_leader['avg_efficiency'] * 100:.1f}%, {bonus_leader['events']} events)"
+        )
+
+    print()
+    print(f"{'Category':20}  {'Leader Team':30}  {'Avg':>6}  {'Events':>6}")
+    print("""--------------------  ------------------------------  ------  ------""")
+
+    if not result["category_leaders"]:
+        print("No category data found for this year and filter.")
+        return
+
+    for row in result["category_leaders"]:
+        print(
+            f"{row['category_name'][:20]:20}  {row['team_name'][:30]:30}  {row['avg_points']:>6.2f}  {row['events']:>6}"
+        )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Print quiz event summaries and results from the SQLite database.")
     parser.add_argument("--db", default=DB_PATH_DEFAULT, help="Path to the SQLite database file.")
@@ -2042,6 +2400,18 @@ if __name__ == "__main__":
         help="Optional team name. If set, prints this team's rank in each round.",
     )
 
+    leaders_parser = subparsers.add_parser(
+        "leaders",
+        help="Print championship/average/bonus/category leaders for a year.",
+    )
+    leaders_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
+    leaders_parser.add_argument(
+        "--min-events",
+        type=int,
+        default=2,
+        help="Minimum events for average-based leader metrics (default: 2).",
+    )
+
     args = parser.parse_args()
     if args.command == "list":
         print_event_list(args.db)
@@ -2080,5 +2450,11 @@ if __name__ == "__main__":
             min_events=args.min_events,
             top=args.top,
             team_name=args.team,
+            db_path=args.db,
+        )
+    elif args.command == "leaders":
+        print_leaders_report(
+            year=args.year,
+            min_events=args.min_events,
             db_path=args.db,
         )
