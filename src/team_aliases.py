@@ -29,5 +29,9 @@ TEAM_NAME_ALIASES = {
 
     "Und am letzten Platz*": "Und am letzten Platz",
 
-    "Wigl Wogl": "Wiglwogl"
+    "Wigl Wogl": "Wiglwogl",
+
+    "Zimmermann's Friends": "Zimmerman's Friends",
+
+    "Schmeckt ein bisschen nussig": "schmeckt ein bisschen nussig",
 }

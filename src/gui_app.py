@@ -183,6 +183,7 @@ class ReportsTab(QWidget):
             [
                 "list",
                 "result",
+                "Event Result Team",
                 "standings",
                 "leaders",
                 "team",
@@ -807,6 +808,12 @@ class ReportsTab(QWidget):
                 text = self._capture(db_report.print_event_list, db)
             elif report == "result":
                 text = self._capture(db_report.print_event_results, **kwargs_event)
+            elif report == "Event Result Team":
+                text = self._capture(
+                    db_report.print_event_team_result,
+                    self.team.text().strip(),
+                    **kwargs_event,
+                )
             elif report == "standings":
                 text = self._capture(db_report.print_championship_standings, self.year.value(), db)
             elif report == "leaders":

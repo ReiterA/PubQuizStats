@@ -307,6 +307,210 @@ def print_event_results(
         )
 
 
+def get_event_team_result(
+    team_name: str,
+    db_path: str = DB_PATH_DEFAULT,
+    event_id: Optional[int] = None,
+    source_file: Optional[str] = None,
+    event_date: Optional[str] = None,
+    location: Optional[str] = None,
+) -> Dict:
+    """Return a detailed result report for one team in one selected event."""
+    if not team_name or not team_name.strip():
+        raise ValueError("Team name is required.")
+
+    canonical_team = _canonical_team_name(team_name)
+    resolved_event_id = _resolve_event_id(
+        db_path, event_id=event_id, source_file=source_file, event_date=event_date, location=location
+    )
+
+    with _connect(db_path) as conn:
+        event_row = conn.execute(
+            """
+            SELECT id, event_date, location, source_file, imported_at
+            FROM quiz_events
+            WHERE id = ?
+            """,
+            (resolved_event_id,),
+        ).fetchone()
+        if event_row is None:
+            raise ValueError(f"No event found with id={resolved_event_id}")
+
+        teams = conn.execute(
+            """
+            SELECT id, team_name, team_rank, total, puzzle_points, bonus_round
+            FROM quiz_teams
+            WHERE event_id = ?
+            ORDER BY COALESCE(team_rank, 9999), total DESC, puzzle_points DESC, team_name ASC
+            """,
+            (resolved_event_id,),
+        ).fetchall()
+
+        selected_team_row = None
+        selected_position = None
+        for fallback_pos, row in enumerate(teams, start=1):
+            if _canonical_team_name(row["team_name"]) != canonical_team:
+                continue
+
+            rank = row["team_rank"] if row["team_rank"] is not None else fallback_pos
+            candidate = {
+                "id": row["id"],
+                "team_name": row["team_name"],
+                "canonical_team_name": canonical_team,
+                "rank": rank,
+                "total": row["total"] if row["total"] is not None else 0,
+                "puzzle_points": row["puzzle_points"],
+                "bonus_round": row["bonus_round"],
+            }
+
+            if selected_team_row is None:
+                selected_team_row = candidate
+                selected_position = rank
+                continue
+
+            # If aliases appear twice in one event, keep the better rank/score row.
+            prev_rank = selected_team_row["rank"]
+            prev_total = selected_team_row["total"] if selected_team_row["total"] is not None else 0
+            if rank < prev_rank or (rank == prev_rank and candidate["total"] > prev_total):
+                selected_team_row = candidate
+                selected_position = rank
+
+        if selected_team_row is None:
+            raise ValueError(
+                f"Team '{canonical_team}' has no result in event #{resolved_event_id} ({event_row['event_date']} @ {event_row['location']})."
+            )
+
+        round_rows = conn.execute(
+            """
+            SELECT round_name, points
+            FROM team_scores
+            WHERE team_id = ?
+            """,
+            (selected_team_row["id"],),
+        ).fetchall()
+
+    round_order = {name: idx for idx, name in ROUND_NAMES.items()}
+    selected_bonus_round = (selected_team_row.get("bonus_round") or "").strip()
+
+    rounds = []
+    possible_candidates = []
+    achieved_bonus_points = 0.0
+    adjusted_round_points_sum = 0.0
+
+    for row in sorted(round_rows, key=lambda r: (round_order.get(r["round_name"], 999), r["round_name"])):
+        round_name = str(row["round_name"])
+        raw_points = row["points"]
+        if raw_points is None:
+            continue
+
+        observed_points = max(0.0, float(raw_points))
+        adjusted_points = observed_points
+        is_bonus_round = (
+            bool(selected_bonus_round)
+            and round_name.casefold() == selected_bonus_round.casefold()
+        )
+
+        if is_bonus_round:
+            adjusted_points = float(math.floor(observed_points / 2.0))
+            achieved_bonus_points = adjusted_points
+
+        possible_candidates.append(_bonus_points_from_normal_points(round_name, adjusted_points))
+        adjusted_round_points_sum += adjusted_points
+
+        rounds.append(
+            {
+                "round_name": round_name,
+                "raw_points": observed_points,
+                "points": adjusted_points,
+                "is_bonus_round": is_bonus_round,
+            }
+        )
+
+    possible_bonus_points = max(possible_candidates) if possible_candidates else 0.0
+    bonus_efficiency = None
+    if possible_bonus_points > 0.0:
+        bonus_efficiency = achieved_bonus_points / possible_bonus_points
+
+    total_teams = len(teams)
+    championship_points = CHAMPIONSHIP_POINTS_BY_POSITION.get(selected_position or 0, 0)
+
+    return {
+        "event": dict(event_row),
+        "team": {
+            **selected_team_row,
+            "position": selected_position,
+            "total_teams": total_teams,
+            "championship_points": championship_points,
+            "round_points_sum": adjusted_round_points_sum,
+            "bonus_efficiency": bonus_efficiency,
+            "achieved_bonus_points": achieved_bonus_points,
+            "possible_bonus_points": possible_bonus_points,
+        },
+        "rounds": rounds,
+    }
+
+
+def print_event_team_result(
+    team_name: str,
+    db_path: str = DB_PATH_DEFAULT,
+    event_id: Optional[int] = None,
+    source_file: Optional[str] = None,
+    event_date: Optional[str] = None,
+    location: Optional[str] = None,
+) -> None:
+    """Print a detailed one-event result report for one team."""
+    result = get_event_team_result(
+        team_name=team_name,
+        db_path=db_path,
+        event_id=event_id,
+        source_file=source_file,
+        event_date=event_date,
+        location=location,
+    )
+
+    event = result["event"]
+    team = result["team"]
+    rounds = result["rounds"]
+
+    print(f"Event result team: {team['canonical_team_name']}")
+    print(f"Event: {event['event_date']} @ {event['location']} ({event['source_file']})")
+    print(f"Imported at: {event['imported_at']}")
+    print()
+
+    print(f"Team in event: {team['team_name']}")
+    print(f"Position: {team['position']} / {team['total_teams']}")
+    print(f"Total points: {team['total']}")
+    puzzle_text = "-" if team["puzzle_points"] is None else f"{team['puzzle_points']}"
+    print(f"Puzzle points: {puzzle_text}")
+    print(f"Championship points (event): {team['championship_points']}")
+    print(f"Selected bonus round: {team.get('bonus_round') or '-'}")
+
+    if team["bonus_efficiency"] is None:
+        print("Bonus efficiency: -")
+    else:
+        print(
+            "Bonus efficiency: "
+            f"{team['bonus_efficiency'] * 100:.1f}% "
+            f"({team['achieved_bonus_points']:.1f}/{team['possible_bonus_points']:.1f})"
+        )
+
+    print()
+    if not rounds:
+        print("No round scores found for this team/event.")
+        return
+
+    print(f"{'Round':20}  {'Points':>7}  {'Raw':>7}  {'Bonus'}")
+    print("""--------------------  -------  -------  -----""")
+    for row in rounds:
+        bonus_tag = "yes" if row["is_bonus_round"] else ""
+        print(
+            f"{row['round_name'][:20]:20}  {row['points']:>7.1f}  {row['raw_points']:>7.1f}  {bonus_tag:>5}"
+        )
+
+    print("""--------------------  -------  -------  -----""")
+    print(f"{'Round points sum':20}  {team['round_points_sum']:>7.1f}")
+
+
 def get_team_season_results(team_name: str, year: int, db_path: str = DB_PATH_DEFAULT) -> Dict:
     """Return all events and results for a team in a given year."""
     canonical_team = _canonical_team_name(team_name)
