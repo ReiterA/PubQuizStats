@@ -20,6 +20,7 @@ TEAM_NAME_ALIASES = {
     "Orientierungslosen": "Orientierungslose",
 
     "Mehr oder weniger": "Mehr oder Weniger",
+    "Mehr oder weniget": "Mehr oder Weniger",
 
     "Nicht für Elend": "Not für Elend",
 
@@ -33,5 +34,22 @@ TEAM_NAME_ALIASES = {
 
     "Zimmermann's Friends": "Zimmerman's Friends",
 
+    "Die Quirligen Quiz Hühner": "Die quirligen Quizhühner",
+    "Die quirligem Quizhühner": "Die quirligen Quizhühner",
+
     "Schmeckt ein bisschen nussig": "schmeckt ein bisschen nussig",
+
+    "Team Nonsense": "Nonsense",
+
+    "Die Woikis": "Die Wolki's",
+    "die Woiki's": "Die Wolki's",
+    "Woikis": "Die Wolki's",
+
+    "Out of control": "Out of Control",
+
+    "Man bringe denn Spritzwein": "Man bringe den Spritzwein",
+
+    "Cpqc": "CPQC",
+
+    "Schaukels­tuhlöl": "Schaukelstuhlöl",
 }

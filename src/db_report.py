@@ -33,7 +33,7 @@ def _bonus_points_from_normal_points(round_name: str, normal_points: float) -> f
     if round_name in {"Bilderrunde", "Puzzle"}:
         return 0.0
 
-    if round_name == "Überraschung":
+    if round_name == "Interessantes":
         # Rule requested by user:
         # 6->5, 5->4, 4->3, 3->2, 2->1, 1->1, 0->0
         rounded = int(points)
@@ -389,6 +389,20 @@ def get_event_team_result(
             (selected_team_row["id"],),
         ).fetchall()
 
+        event_round_rows = conn.execute(
+            """
+            SELECT
+                ts.team_id,
+                ts.round_name,
+                ts.points,
+                qt.bonus_round
+            FROM team_scores ts
+            JOIN quiz_teams qt ON qt.id = ts.team_id
+            WHERE qt.event_id = ?
+            """,
+            (resolved_event_id,),
+        ).fetchall()
+
     round_order = {name: idx for idx, name in ROUND_NAMES.items()}
     selected_bonus_round = (selected_team_row.get("bonus_round") or "").strip()
 
@@ -432,6 +446,46 @@ def get_event_team_result(
         bonus_efficiency = achieved_bonus_points / possible_bonus_points
 
     total_teams = len(teams)
+
+    # Build event-wide adjusted category stats for ranking/averages.
+    event_round_scores: Dict[str, Dict[int, float]] = {}
+    for row in event_round_rows:
+        round_name = str(row["round_name"])
+        raw_points = 0.0 if row["points"] is None else max(0.0, float(row["points"]))
+        bonus_round_name = (row["bonus_round"] or "").strip()
+        is_bonus_round = bool(bonus_round_name) and round_name.casefold() == bonus_round_name.casefold()
+        adjusted_points = float(math.floor(raw_points / 2.0)) if is_bonus_round else raw_points
+
+        if round_name not in event_round_scores:
+            event_round_scores[round_name] = {}
+        event_round_scores[round_name][int(row["team_id"])] = adjusted_points
+
+    def _category_position(scores: List[float], target_score: float) -> int:
+        # Competition ranking: 1,2,2,4
+        return 1 + sum(1 for score in scores if score > target_score)
+
+    for row in rounds:
+        category_scores_by_team = event_round_scores.get(row["round_name"], {})
+        category_scores = [category_scores_by_team.get(int(team["id"]), 0.0) for team in teams]
+        average_points = (sum(category_scores) / total_teams) if total_teams else 0.0
+        row["category_position"] = _category_position(category_scores, float(row["points"]))
+        row["category_total_teams"] = total_teams
+        row["category_average_points"] = average_points
+
+    puzzle_scores = [
+        float(team["puzzle_points"])
+        for team in teams
+        if team["puzzle_points"] is not None
+    ]
+    selected_puzzle_points = selected_team_row["puzzle_points"]
+    puzzle_position = None
+    puzzle_total_teams = len(puzzle_scores)
+    puzzle_average = None
+    if puzzle_scores:
+        puzzle_average = sum(puzzle_scores) / puzzle_total_teams
+    if selected_puzzle_points is not None and puzzle_scores:
+        puzzle_position = _category_position(puzzle_scores, float(selected_puzzle_points))
+
     championship_points = CHAMPIONSHIP_POINTS_BY_POSITION.get(selected_position or 0, 0)
 
     return {
@@ -445,6 +499,9 @@ def get_event_team_result(
             "bonus_efficiency": bonus_efficiency,
             "achieved_bonus_points": achieved_bonus_points,
             "possible_bonus_points": possible_bonus_points,
+            "puzzle_position": puzzle_position,
+            "puzzle_total_teams": puzzle_total_teams,
+            "puzzle_average": puzzle_average,
         },
         "rounds": rounds,
     }
@@ -482,6 +539,14 @@ def print_event_team_result(
     print(f"Total points: {team['total']}")
     puzzle_text = "-" if team["puzzle_points"] is None else f"{team['puzzle_points']}"
     print(f"Puzzle points: {puzzle_text}")
+    if team["puzzle_points"] is None or team.get("puzzle_position") is None:
+        print("Puzzle category: -")
+    else:
+        print(
+            "Puzzle category: "
+            f"{team['puzzle_position']} / {team['puzzle_total_teams']}"
+            f" (event avg: {team['puzzle_average']:.1f})"
+        )
     print(f"Championship points (event): {team['championship_points']}")
     print(f"Selected bonus round: {team.get('bonus_round') or '-'}")
 
@@ -499,15 +564,17 @@ def print_event_team_result(
         print("No round scores found for this team/event.")
         return
 
-    print(f"{'Round':20}  {'Points':>7}  {'Raw':>7}  {'Bonus'}")
-    print("""--------------------  -------  -------  -----""")
+    print(f"{'Round':20}  {'Points':>7}  {'Raw':>7}  {'Pos':>9}  {'Avg':>7}  {'Bonus'}")
+    print("""--------------------  -------  -------  ---------  -------  -----""")
     for row in rounds:
         bonus_tag = "yes" if row["is_bonus_round"] else ""
+        pos_text = f"{row['category_position']}/{row['category_total_teams']}"
         print(
-            f"{row['round_name'][:20]:20}  {row['points']:>7.1f}  {row['raw_points']:>7.1f}  {bonus_tag:>5}"
+            f"{row['round_name'][:20]:20}  {row['points']:>7.1f}  {row['raw_points']:>7.1f}  "
+            f"{pos_text:>9}  {row['category_average_points']:>7.1f}  {bonus_tag:>5}"
         )
 
-    print("""--------------------  -------  -------  -----""")
+    print("""--------------------  -------  -------  ---------  -------  -----""")
     print(f"{'Round points sum':20}  {team['round_points_sum']:>7.1f}")
 
 
