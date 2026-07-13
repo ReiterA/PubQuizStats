@@ -13,6 +13,7 @@ from PySide6.QtGui import QFont, QFontDatabase, QImage, QPainter, QPageLayout
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
+    QListView,
     QApplication,
     QComboBox,
     QFileDialog,
@@ -202,7 +203,15 @@ class ReportsTab(QWidget):
         self.year.setRange(2000, 2100)
         self.year.setValue(2026)
 
-        self.team = QLineEdit()
+        self.team = QComboBox()
+        self.team.setMaxVisibleItems(14)
+        team_view = QListView(self.team)
+        team_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.team.setView(team_view)
+        self.team.setEditable(True)
+        self.team.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.team.completer().setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.team.completer().setFilterMode(Qt.MatchFlag.MatchContains)
         self.round_name = QLineEdit()
 
         self.min_events = QSpinBox()
@@ -273,8 +282,21 @@ class ReportsTab(QWidget):
         layout.addWidget(self.soffice_info)
         layout.addWidget(self.output)
 
+        self.db_path.editingFinished.connect(self._refresh_lookup_data)
+        self.year.valueChanged.connect(self._refresh_teams)
+
         self._refresh_converter_info()
+        self._refresh_lookup_data()
+
+    def _selected_team_name(self) -> str:
+        selected = self.team.currentData()
+        if selected is None:
+            return self.team.currentText().strip()
+        return str(selected).strip()
+
+    def _refresh_lookup_data(self):
         self._refresh_events()
+        self._refresh_teams()
 
     def _refresh_converter_info(self):
         converter = detect_office_converter()
@@ -299,6 +321,32 @@ class ReportsTab(QWidget):
         for event in events:
             label = f"#{event['id']} | {event['event_date']} | {event['location']} | {event.get('winner') or 'N/A'}"
             self.event_picker.addItem(label, event)
+
+    def _refresh_teams(self):
+        db = self.db_path.text().strip()
+        selected_team = self._selected_team_name()
+
+        self.team.clear()
+        self.team.addItem("Select team...", "")
+
+        try:
+            standings = db_report.get_championship_standings(self.year.value(), db).get("standings", [])
+        except Exception:
+            return
+
+        team_names = []
+        for row in standings:
+            team_name = str(row.get("team_name", "")).strip()
+            if team_name:
+                team_names.append(team_name)
+
+        for team_name in sorted(team_names, key=str.casefold):
+            self.team.addItem(team_name, team_name)
+
+        if selected_team:
+            idx = self.team.findData(selected_team)
+            if idx >= 0:
+                self.team.setCurrentIndex(idx)
 
     def _apply_selected_event(self):
         data = self.event_picker.currentData()
@@ -688,9 +736,9 @@ class ReportsTab(QWidget):
             self._convert_docx_to_pdf(str(tmp_docx), output_pdf_path)
 
     def _generate_team_pdf(self):
-        team_name = self.team.text().strip()
+        team_name = self._selected_team_name()
         if not team_name:
-            QMessageBox.warning(self, "Missing team", "Please enter a team name before generating the PDF.")
+            QMessageBox.warning(self, "Missing team", "Please select a team before generating the PDF.")
             return
 
         db = self.db_path.text().strip()
@@ -812,7 +860,7 @@ class ReportsTab(QWidget):
             elif report == "Event Result Team":
                 text = self._capture(
                     db_report.print_event_team_result,
-                    self.team.text().strip(),
+                    self._selected_team_name(),
                     **kwargs_event,
                 )
             elif report == "standings":
@@ -828,13 +876,13 @@ class ReportsTab(QWidget):
             elif report == "leaders":
                 text = self._capture(db_report.print_leaders_report, self.year.value(), self.min_events.value(), db)
             elif report == "team":
-                text = self._capture(db_report.print_team_season_results, self.team.text().strip(), self.year.value(), db)
+                text = self._capture(db_report.print_team_season_results, self._selected_team_name(), self.year.value(), db)
             elif report == "averages":
-                text = self._capture(db_report.print_team_round_averages, self.team.text().strip(), self.year.value(), db)
+                text = self._capture(db_report.print_team_round_averages, self._selected_team_name(), self.year.value(), db)
             elif report == "radar":
                 text = self._capture(
                     db_report.print_team_radar_report,
-                    self.team.text().strip(),
+                    self._selected_team_name(),
                     self.year.value(),
                     self.min_events.value(),
                     None,
@@ -843,7 +891,7 @@ class ReportsTab(QWidget):
             elif report == "bonus-efficiency":
                 text = self._capture(
                     db_report.print_team_bonus_efficiency_report,
-                    self.team.text().strip(),
+                    self._selected_team_name(),
                     self.year.value(),
                     db,
                 )
@@ -855,7 +903,7 @@ class ReportsTab(QWidget):
                 text = self._capture(db_report.print_event_difficulty_report, **kwargs_event)
             elif report == "round-strength":
                 round_name = self.round_name.text().strip() or None
-                team_name = self.team.text().strip() or None
+                team_name = self._selected_team_name() or None
                 text = self._capture(
                     db_report.print_round_strength_ranking,
                     self.year.value(),

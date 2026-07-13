@@ -2681,30 +2681,30 @@ def get_standing_progress_report(
 
 def _standing_progress_output_path(year: int, top: int, output_path: Optional[str] = None) -> Path:
     if output_path is not None and output_path.strip():
-        return Path(output_path.strip())
-    return Path("data") / "tmp" / f"standing_progress_{year}_top{top}.svg"
+        selected = Path(output_path.strip())
+        if selected.suffix.lower() != ".pdf":
+            selected = selected.with_suffix(".pdf")
+        return selected
+    return Path("data") / "tmp" / f"standing_progress_{year}_top{top}.pdf"
 
 
-def render_standing_progress_svg(result: Dict, output_path: Optional[str] = None) -> str:
-    """Render standing progress as an SVG line chart and return the written path."""
+def render_standing_progress_pdf(result: Dict, output_path: Optional[str] = None) -> str:
+    """Render standing progress as an A4 portrait PDF line chart and return the path."""
     events = result.get("events", [])
     teams = result.get("teams", [])
     if not events or not teams:
         raise ValueError("No standing progress data available for rendering.")
 
+    try:
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Patch
+    except ImportError as exc:
+        raise RuntimeError("matplotlib is required for standing-progress PDF export.") from exc
+
     target_path = _standing_progress_output_path(result["year"], result["top"], output_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
     event_count = len(events)
-    width = max(1400, 880 + event_count * 74)
-    height = 880
-    margin_left = 100
-    margin_top = 70
-    margin_bottom = 190
-    margin_right = 380
-    plot_width = width - margin_left - margin_right
-    plot_height = height - margin_top - margin_bottom
-
     y_max_data = int(result.get("y_max", 0))
     y_max = max(100, int(math.ceil(max(1, y_max_data) / 20.0) * 20))
 
@@ -2715,106 +2715,83 @@ def render_standing_progress_svg(result: Dict, output_path: Optional[str] = None
         "#dbdb8d", "#c49c94", "#f7b6d2", "#c7c7c7", "#c5b0d5",
     ]
 
-    def x_for_index(index: int) -> float:
-        if event_count == 1:
-            return margin_left + plot_width / 2
-        return margin_left + (plot_width * index / (event_count - 1))
+    x_values = list(range(event_count))
+    x_labels = [f"{event['event_date'][5:]} {event['location'][:12]}" for event in events]
 
-    def y_for_points(points: float) -> float:
-        normalized = max(0.0, min(1.0, float(points) / y_max))
-        return margin_top + plot_height * (1.0 - normalized)
+    fig, ax = plt.subplots(figsize=(8.27, 11.69))  # A4 portrait in inches
 
-    y_grid_lines = []
-    y_labels = []
-    y_steps = 6
-    for step in range(y_steps + 1):
-        value = y_max * step / y_steps
-        y = y_for_points(value)
-        y_grid_lines.append(
-            f'<line x1="{margin_left:.1f}" y1="{y:.1f}" x2="{(margin_left + plot_width):.1f}" y2="{y:.1f}" stroke="#dfe4ea" stroke-width="1" />'
-        )
-        y_labels.append(
-            f'<text x="{(margin_left - 16):.1f}" y="{(y + 5):.1f}" text-anchor="end" font-size="16" fill="#4b5563">{int(round(value))}</text>'
-        )
+    # Use most of the page and keep a dedicated area below the x-axis for the legend.
+    ax.set_position([0.14, 0.37, 0.74, 0.56])
 
-    x_ticks = []
-    for idx, event in enumerate(events):
-        x = x_for_index(idx)
-        tick_label = f"{event['event_date'][5:]} {event['location'][:12]}"
-        x_ticks.append(
-            f'<line x1="{x:.1f}" y1="{(margin_top + plot_height):.1f}" x2="{x:.1f}" y2="{(margin_top + plot_height + 8):.1f}" stroke="#9ca3af" stroke-width="1" />'
-            f'<text x="{x:.1f}" y="{(margin_top + plot_height + 28):.1f}" text-anchor="end" font-size="14" fill="#374151" transform="rotate(-35 {x:.1f} {margin_top + plot_height + 28:.1f})">{escape(tick_label)}</text>'
+    for team_idx, team in enumerate(teams):
+        color = palette[team_idx % len(palette)]
+        ax.plot(
+            x_values,
+            team["values"],
+            color=color,
+            linewidth=2.5,
+            marker="o",
+            markersize=3.8,
+            markeredgecolor="#ffffff",
+            markeredgewidth=0.8,
         )
 
-    series_lines = []
-    series_markers = []
-    end_labels = []
+    ax.set_xlim(-0.2, event_count - 0.8 if event_count > 1 else 0.2)
+    ax.set_ylim(0, y_max)
+    ax.grid(axis="y", color="#dfe4ea", linewidth=1)
 
-    # Keep legend readable by starting at the top and distributing labels vertically.
-    legend_top = margin_top + 10.0
-    legend_bottom = margin_top + plot_height - 10.0
+    ax.set_ylabel("Meisterschaftspunkte", fontsize=12, color="#374151")
+    ax.set_xlabel("Events", fontsize=11, color="#374151", labelpad=36)
+
+    ax.set_xticks(x_values)
+    ax.set_xticklabels(x_labels, rotation=35, ha="right", fontsize=8)
+    ax.tick_params(axis="y", labelsize=10)
+
+    for spine_name in ("top", "right"):
+        ax.spines[spine_name].set_visible(False)
+    ax.spines["left"].set_color("#94a3b8")
+    ax.spines["bottom"].set_color("#94a3b8")
+
+    fig.suptitle(
+        f"Punkteentwicklung Top {result['top']} Teams ({result['year']})",
+        fontsize=18,
+        fontweight="bold",
+        y=0.965,
+    )
+
     legend_order = sorted(
         enumerate(teams),
         key=lambda pair: pair[1]["final_points"],
         reverse=True,
     )
-    legend_steps = max(1, len(legend_order) - 1)
-    legend_gap = (legend_bottom - legend_top) / legend_steps
-
-    team_to_label_y = {}
-    for pos, (team_idx, _team) in enumerate(legend_order):
-        team_to_label_y[team_idx] = legend_top + legend_gap * pos
-
-    for team_idx, team in enumerate(teams):
+    legend_handles = []
+    for team_idx, team in legend_order:
         color = palette[team_idx % len(palette)]
-        points = []
-        for idx, value in enumerate(team["values"]):
-            points.append((x_for_index(idx), y_for_points(value)))
-
-        polyline = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
-        series_lines.append(
-            f'<polyline points="{polyline}" fill="none" stroke="{color}" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round" />'
+        legend_handles.append(
+            Patch(facecolor=color, edgecolor=color, label=f"{team['team_name']} ({int(team['final_points'])})")
         )
 
-        for x, y in points:
-            series_markers.append(
-                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.8" fill="{color}" stroke="#ffffff" stroke-width="1.2" />'
-            )
+    if len(legend_handles) <= 8:
+        legend_cols = 2
+    elif len(legend_handles) <= 16:
+        legend_cols = 3
+    else:
+        legend_cols = 4
 
-        label_x = margin_left + plot_width + 22
-        label_y = team_to_label_y[team_idx]
-        marker_size = 12.0
-        marker_y = label_y - marker_size / 2
-        text_x = label_x + marker_size + 8
-        end_labels.append(
-            f'<rect x="{label_x:.1f}" y="{marker_y:.1f}" width="{marker_size:.1f}" height="{marker_size:.1f}" rx="2.5" fill="{color}" />'
-            f'<text x="{text_x:.1f}" y="{(label_y + 5):.1f}" text-anchor="start" font-size="16" font-weight="600" fill="#111827">{escape(team["team_name"])} ({int(team["final_points"])})</text>'
-        )
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.06),
+        ncol=legend_cols,
+        frameon=False,
+        fontsize=8,
+        handlelength=1.0,
+        handletextpad=0.5,
+        columnspacing=1.2,
+    )
 
-    svg = f'''<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
-  <rect width="100%" height="100%" fill="#f8fafc" />
-  <rect x="24" y="24" width="{width - 48}" height="{height - 48}" rx="22" fill="#ffffff" stroke="#e5e7eb" />
-
-  <text x="{(margin_left + plot_width / 2):.1f}" y="44" text-anchor="middle" font-size="30" font-weight="700" fill="#111827">Punkteentwicklung Top {result['top']} Teams ({result['year']})</text>
-  <text x="{(margin_left + plot_width / 2):.1f}" y="68" text-anchor="middle" font-size="15" fill="#4b5563">Kumulative Meisterschaftspunkte pro Event</text>
-
-  <line x1="{margin_left:.1f}" y1="{margin_top:.1f}" x2="{margin_left:.1f}" y2="{(margin_top + plot_height):.1f}" stroke="#94a3b8" stroke-width="1.4" />
-  <line x1="{margin_left:.1f}" y1="{(margin_top + plot_height):.1f}" x2="{(margin_left + plot_width):.1f}" y2="{(margin_top + plot_height):.1f}" stroke="#94a3b8" stroke-width="1.4" />
-
-  <g>{''.join(y_grid_lines)}</g>
-  <g>{''.join(y_labels)}</g>
-  <g>{''.join(x_ticks)}</g>
-  <g>{''.join(series_lines)}</g>
-  <g>{''.join(series_markers)}</g>
-  <g>{''.join(end_labels)}</g>
-
-  <text x="{(margin_left - 64):.1f}" y="{(margin_top + plot_height / 2):.1f}" text-anchor="middle" font-size="16" fill="#374151" transform="rotate(-90 {margin_left - 64:.1f} {margin_top + plot_height / 2:.1f})">Meisterschaftspunkte</text>
-  <text x="{(margin_left + plot_width / 2):.1f}" y="{(height - 24):.1f}" text-anchor="middle" font-size="16" fill="#374151">Events (chronologisch)</text>
-</svg>
-'''
-
-    target_path.write_text(svg, encoding="utf-8")
+    fig.savefig(target_path, format="pdf")
+    plt.close(fig)
     return str(target_path)
 
 
@@ -2836,7 +2813,7 @@ def print_standing_progress_report(
         print("No event/team data found for this year.")
         return
 
-    chart_path = render_standing_progress_svg(result=result, output_path=output_path)
+    chart_path = render_standing_progress_pdf(result=result, output_path=output_path)
 
     print(f"{'Pos':>4}  {'Team':30}  {'Points':>6}")
     print("""----  ------------------------------  ------""")
@@ -2969,7 +2946,7 @@ if __name__ == "__main__":
     standing_progress_parser.add_argument(
         "--output",
         type=str,
-        help="Optional SVG path for the generated chart.",
+        help="Optional PDF path for the generated chart.",
     )
 
     args = parser.parse_args()
