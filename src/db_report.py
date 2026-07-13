@@ -2575,6 +2575,278 @@ def print_leaders_report(
         )
 
 
+def get_standing_progress_report(
+    year: int,
+    top: int = 20,
+    db_path: str = DB_PATH_DEFAULT,
+) -> Dict:
+    """Return cumulative championship points per event for top teams in final standings."""
+    if top < 1:
+        raise ValueError("top must be at least 1")
+
+    year_prefix = f"{year:04d}-%"
+    with _connect(db_path) as conn:
+        events = conn.execute(
+            """
+            SELECT id, event_date, location
+            FROM quiz_events
+            WHERE event_date LIKE ?
+            ORDER BY event_date ASC, location ASC
+            """,
+            (year_prefix,),
+        ).fetchall()
+
+        if not events:
+            return {
+                "year": year,
+                "top": top,
+                "events": [],
+                "teams": [],
+                "y_max": 0,
+            }
+
+        event_points: Dict[int, Dict[str, int]] = {}
+        final_points: Dict[str, int] = {}
+
+        for event in events:
+            rows = conn.execute(
+                """
+                SELECT team_name, team_rank, total, puzzle_points
+                FROM quiz_teams
+                WHERE event_id = ?
+                ORDER BY COALESCE(team_rank, 9999), total DESC, puzzle_points DESC, team_name ASC
+                """,
+                (event["id"],),
+            ).fetchall()
+
+            per_event_points: Dict[str, int] = {}
+            for fallback_pos, row in enumerate(rows, start=1):
+                rank = row["team_rank"] if row["team_rank"] is not None else fallback_pos
+                points = CHAMPIONSHIP_POINTS_BY_POSITION.get(rank, 0)
+                if points <= 0:
+                    continue
+
+                team_name = _canonical_team_name(row["team_name"])
+                existing = per_event_points.get(team_name)
+                if existing is None or points > existing:
+                    per_event_points[team_name] = points
+
+            event_points[event["id"]] = per_event_points
+            for team_name, points in per_event_points.items():
+                final_points[team_name] = final_points.get(team_name, 0) + points
+
+    selected_teams = sorted(
+        final_points.keys(),
+        key=lambda name: (-final_points[name], name.lower()),
+    )[:top]
+
+    cumulative = {team_name: 0 for team_name in selected_teams}
+    event_list = []
+    for event in events:
+        event_id = int(event["id"])
+        per_event = event_points.get(event_id, {})
+        series_point = {}
+        for team_name in selected_teams:
+            cumulative[team_name] += int(per_event.get(team_name, 0))
+            series_point[team_name] = cumulative[team_name]
+
+        event_list.append(
+            {
+                "id": event_id,
+                "event_date": event["event_date"],
+                "location": event["location"],
+                "label": f"{event['event_date']} {event['location']}",
+                "series": series_point,
+            }
+        )
+
+    teams = [
+        {
+            "team_name": team_name,
+            "final_points": cumulative[team_name],
+            "values": [event["series"][team_name] for event in event_list],
+        }
+        for team_name in selected_teams
+    ]
+
+    y_max = max((team["final_points"] for team in teams), default=0)
+    return {
+        "year": year,
+        "top": top,
+        "events": event_list,
+        "teams": teams,
+        "y_max": y_max,
+    }
+
+
+def _standing_progress_output_path(year: int, top: int, output_path: Optional[str] = None) -> Path:
+    if output_path is not None and output_path.strip():
+        return Path(output_path.strip())
+    return Path("data") / "tmp" / f"standing_progress_{year}_top{top}.svg"
+
+
+def render_standing_progress_svg(result: Dict, output_path: Optional[str] = None) -> str:
+    """Render standing progress as an SVG line chart and return the written path."""
+    events = result.get("events", [])
+    teams = result.get("teams", [])
+    if not events or not teams:
+        raise ValueError("No standing progress data available for rendering.")
+
+    target_path = _standing_progress_output_path(result["year"], result["top"], output_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    event_count = len(events)
+    width = max(1400, 880 + event_count * 74)
+    height = 880
+    margin_left = 100
+    margin_top = 70
+    margin_bottom = 190
+    margin_right = 380
+    plot_width = width - margin_left - margin_right
+    plot_height = height - margin_top - margin_bottom
+
+    y_max_data = int(result.get("y_max", 0))
+    y_max = max(100, int(math.ceil(max(1, y_max_data) / 20.0) * 20))
+
+    palette = [
+        "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#17becf",
+        "#bcbd22", "#8c564b", "#e377c2", "#7f7f7f", "#9467bd",
+        "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#9edae5",
+        "#dbdb8d", "#c49c94", "#f7b6d2", "#c7c7c7", "#c5b0d5",
+    ]
+
+    def x_for_index(index: int) -> float:
+        if event_count == 1:
+            return margin_left + plot_width / 2
+        return margin_left + (plot_width * index / (event_count - 1))
+
+    def y_for_points(points: float) -> float:
+        normalized = max(0.0, min(1.0, float(points) / y_max))
+        return margin_top + plot_height * (1.0 - normalized)
+
+    y_grid_lines = []
+    y_labels = []
+    y_steps = 6
+    for step in range(y_steps + 1):
+        value = y_max * step / y_steps
+        y = y_for_points(value)
+        y_grid_lines.append(
+            f'<line x1="{margin_left:.1f}" y1="{y:.1f}" x2="{(margin_left + plot_width):.1f}" y2="{y:.1f}" stroke="#dfe4ea" stroke-width="1" />'
+        )
+        y_labels.append(
+            f'<text x="{(margin_left - 16):.1f}" y="{(y + 5):.1f}" text-anchor="end" font-size="16" fill="#4b5563">{int(round(value))}</text>'
+        )
+
+    x_ticks = []
+    for idx, event in enumerate(events):
+        x = x_for_index(idx)
+        tick_label = f"{event['event_date'][5:]} {event['location'][:12]}"
+        x_ticks.append(
+            f'<line x1="{x:.1f}" y1="{(margin_top + plot_height):.1f}" x2="{x:.1f}" y2="{(margin_top + plot_height + 8):.1f}" stroke="#9ca3af" stroke-width="1" />'
+            f'<text x="{x:.1f}" y="{(margin_top + plot_height + 28):.1f}" text-anchor="end" font-size="14" fill="#374151" transform="rotate(-35 {x:.1f} {margin_top + plot_height + 28:.1f})">{escape(tick_label)}</text>'
+        )
+
+    series_lines = []
+    series_markers = []
+    end_labels = []
+
+    # Keep legend readable by starting at the top and distributing labels vertically.
+    legend_top = margin_top + 10.0
+    legend_bottom = margin_top + plot_height - 10.0
+    legend_order = sorted(
+        enumerate(teams),
+        key=lambda pair: pair[1]["final_points"],
+        reverse=True,
+    )
+    legend_steps = max(1, len(legend_order) - 1)
+    legend_gap = (legend_bottom - legend_top) / legend_steps
+
+    team_to_label_y = {}
+    for pos, (team_idx, _team) in enumerate(legend_order):
+        team_to_label_y[team_idx] = legend_top + legend_gap * pos
+
+    for team_idx, team in enumerate(teams):
+        color = palette[team_idx % len(palette)]
+        points = []
+        for idx, value in enumerate(team["values"]):
+            points.append((x_for_index(idx), y_for_points(value)))
+
+        polyline = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+        series_lines.append(
+            f'<polyline points="{polyline}" fill="none" stroke="{color}" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round" />'
+        )
+
+        for x, y in points:
+            series_markers.append(
+                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.8" fill="{color}" stroke="#ffffff" stroke-width="1.2" />'
+            )
+
+        label_x = margin_left + plot_width + 22
+        label_y = team_to_label_y[team_idx]
+        marker_size = 12.0
+        marker_y = label_y - marker_size / 2
+        text_x = label_x + marker_size + 8
+        end_labels.append(
+            f'<rect x="{label_x:.1f}" y="{marker_y:.1f}" width="{marker_size:.1f}" height="{marker_size:.1f}" rx="2.5" fill="{color}" />'
+            f'<text x="{text_x:.1f}" y="{(label_y + 5):.1f}" text-anchor="start" font-size="16" font-weight="600" fill="#111827">{escape(team["team_name"])} ({int(team["final_points"])})</text>'
+        )
+
+    svg = f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="100%" height="100%" fill="#f8fafc" />
+  <rect x="24" y="24" width="{width - 48}" height="{height - 48}" rx="22" fill="#ffffff" stroke="#e5e7eb" />
+
+  <text x="{(margin_left + plot_width / 2):.1f}" y="44" text-anchor="middle" font-size="30" font-weight="700" fill="#111827">Punkteentwicklung Top {result['top']} Teams ({result['year']})</text>
+  <text x="{(margin_left + plot_width / 2):.1f}" y="68" text-anchor="middle" font-size="15" fill="#4b5563">Kumulative Meisterschaftspunkte pro Event</text>
+
+  <line x1="{margin_left:.1f}" y1="{margin_top:.1f}" x2="{margin_left:.1f}" y2="{(margin_top + plot_height):.1f}" stroke="#94a3b8" stroke-width="1.4" />
+  <line x1="{margin_left:.1f}" y1="{(margin_top + plot_height):.1f}" x2="{(margin_left + plot_width):.1f}" y2="{(margin_top + plot_height):.1f}" stroke="#94a3b8" stroke-width="1.4" />
+
+  <g>{''.join(y_grid_lines)}</g>
+  <g>{''.join(y_labels)}</g>
+  <g>{''.join(x_ticks)}</g>
+  <g>{''.join(series_lines)}</g>
+  <g>{''.join(series_markers)}</g>
+  <g>{''.join(end_labels)}</g>
+
+  <text x="{(margin_left - 64):.1f}" y="{(margin_top + plot_height / 2):.1f}" text-anchor="middle" font-size="16" fill="#374151" transform="rotate(-90 {margin_left - 64:.1f} {margin_top + plot_height / 2:.1f})">Meisterschaftspunkte</text>
+  <text x="{(margin_left + plot_width / 2):.1f}" y="{(height - 24):.1f}" text-anchor="middle" font-size="16" fill="#374151">Events (chronologisch)</text>
+</svg>
+'''
+
+    target_path.write_text(svg, encoding="utf-8")
+    return str(target_path)
+
+
+def print_standing_progress_report(
+    year: int,
+    top: int = 20,
+    output_path: Optional[str] = None,
+    db_path: str = DB_PATH_DEFAULT,
+) -> None:
+    """Print summary and export standing-progress chart for a year."""
+    result = get_standing_progress_report(year=year, top=top, db_path=db_path)
+
+    print(f"Standing progress report {result['year']}")
+    print(f"Teams (top): {result['top']}")
+    print(f"Events: {len(result['events'])}")
+    print()
+
+    if not result["events"] or not result["teams"]:
+        print("No event/team data found for this year.")
+        return
+
+    chart_path = render_standing_progress_svg(result=result, output_path=output_path)
+
+    print(f"{'Pos':>4}  {'Team':30}  {'Points':>6}")
+    print("""----  ------------------------------  ------""")
+    for pos, team in enumerate(result["teams"], start=1):
+        print(f"{pos:>4}  {team['team_name'][:30]:30}  {team['final_points']:>6}")
+
+    print()
+    print(f"Chart saved to: {chart_path}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Print quiz event summaries and results from the SQLite database.")
     parser.add_argument("--db", default=DB_PATH_DEFAULT, help="Path to the SQLite database file.")
@@ -2683,6 +2955,23 @@ if __name__ == "__main__":
         help="Minimum events for average-based leader metrics (default: 2).",
     )
 
+    standing_progress_parser = subparsers.add_parser(
+        "standing-progress",
+        help="Export a line chart of cumulative championship points for the top teams.",
+    )
+    standing_progress_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
+    standing_progress_parser.add_argument(
+        "--top",
+        type=int,
+        default=20,
+        help="How many teams from the final standings to include (default: 20).",
+    )
+    standing_progress_parser.add_argument(
+        "--output",
+        type=str,
+        help="Optional SVG path for the generated chart.",
+    )
+
     args = parser.parse_args()
     if args.command == "list":
         print_event_list(args.db)
@@ -2727,5 +3016,12 @@ if __name__ == "__main__":
         print_leaders_report(
             year=args.year,
             min_events=args.min_events,
+            db_path=args.db,
+        )
+    elif args.command == "standing-progress":
+        print_standing_progress_report(
+            year=args.year,
+            top=args.top,
+            output_path=args.output,
             db_path=args.db,
         )

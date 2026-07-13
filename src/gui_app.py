@@ -185,6 +185,7 @@ class ReportsTab(QWidget):
                 "result",
                 "Event Result Team",
                 "standings",
+                "standing-progress",
                 "leaders",
                 "team",
                 "averages",
@@ -816,6 +817,14 @@ class ReportsTab(QWidget):
                 )
             elif report == "standings":
                 text = self._capture(db_report.print_championship_standings, self.year.value(), db)
+            elif report == "standing-progress":
+                text = self._capture(
+                    db_report.print_standing_progress_report,
+                    self.year.value(),
+                    self.top.value(),
+                    None,
+                    db,
+                )
             elif report == "leaders":
                 text = self._capture(db_report.print_leaders_report, self.year.value(), self.min_events.value(), db)
             elif report == "team":
