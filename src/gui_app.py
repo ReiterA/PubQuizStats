@@ -1,4 +1,5 @@
 import os
+import json
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,9 @@ from PySide6.QtWidgets import (
 
 import db_report
 import import_quiz_results
+
+
+CONFIG_FILE_PATH = os.path.join("data", "config.json")
 
 
 def detect_office_converter() -> str | None:
@@ -234,8 +238,9 @@ class ImportTab(QWidget):
 
 
 class ReportsTab(QWidget):
-    def __init__(self):
+    def __init__(self, settings: dict | None = None):
         super().__init__()
+        self.default_team_name = (settings or {}).get("default_team", "")
         self._build_ui()
 
     def _build_ui(self):
@@ -413,6 +418,22 @@ class ReportsTab(QWidget):
             idx = self.team.findData(selected_team)
             if idx >= 0:
                 self.team.setCurrentIndex(idx)
+                return
+
+        self._apply_default_team_selection()
+
+    def _apply_default_team_selection(self):
+        default_team = (self.default_team_name or "").strip()
+        if not default_team:
+            return
+
+        idx = self.team.findData(default_team)
+        if idx >= 0:
+            self.team.setCurrentIndex(idx)
+
+    def set_default_team(self, team_name: str):
+        self.default_team_name = (team_name or "").strip()
+        self._apply_default_team_selection()
 
     def _apply_selected_event(self):
         data = self.event_picker.currentData()
@@ -994,11 +1015,77 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("PubQuizStats")
         self.resize(1100, 750)
 
+        self.settings = self._load_settings()
+
+        self.import_tab = ImportTab()
+        self.reports_tab = ReportsTab(settings=self.settings)
+        self.config_tab = ConfigTab(
+            initial_settings=self.settings,
+            on_save=self._save_settings,
+        )
+
         tabs = QTabWidget()
-        tabs.addTab(ImportTab(), "Import")
-        tabs.addTab(ReportsTab(), "Reports")
+        tabs.addTab(self.import_tab, "Import")
+        tabs.addTab(self.reports_tab, "Reports")
+        tabs.addTab(self.config_tab, "Config")
 
         self.setCentralWidget(tabs)
+
+    def _load_settings(self) -> dict:
+        if not os.path.exists(CONFIG_FILE_PATH):
+            return {}
+
+        try:
+            with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return {}
+
+        if not isinstance(data, dict):
+            return {}
+        return data
+
+    def _save_settings(self, settings: dict):
+        os.makedirs(os.path.dirname(CONFIG_FILE_PATH), exist_ok=True)
+        with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+
+        self.settings = settings
+        self.reports_tab.set_default_team(settings.get("default_team", ""))
+
+
+class ConfigTab(QWidget):
+    def __init__(self, initial_settings: dict | None = None, on_save=None):
+        super().__init__()
+        self._on_save = on_save
+        self._build_ui(initial_settings or {})
+
+    def _build_ui(self, settings: dict):
+        layout = QVBoxLayout(self)
+
+        settings_box = QGroupBox("Settings")
+        settings_layout = QFormLayout(settings_box)
+
+        self.default_team = QLineEdit(str(settings.get("default_team", "")))
+        settings_layout.addRow("Default Team", self.default_team)
+
+        save_btn = QPushButton("Speichern")
+        save_btn.clicked.connect(self._save)
+
+        layout.addWidget(settings_box)
+        layout.addWidget(save_btn)
+        layout.addStretch(1)
+
+    def _save(self):
+        settings = {
+            "default_team": self.default_team.text().strip(),
+        }
+        try:
+            if self._on_save:
+                self._on_save(settings)
+            QMessageBox.information(self, "Gespeichert", "Einstellungen wurden gespeichert.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Speichern fehlgeschlagen", str(exc))
 
 
 def main():
