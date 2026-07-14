@@ -312,6 +312,25 @@ def import_quiz_file(excel_path, db_path=DB_PATH_DEFAULT):
         (source_file,),
     )
     row = cur.fetchone()
+    is_new_event = row is None
+    first_time_teams = []
+
+    if is_new_event:
+        existing_team_names = {
+            str(existing_name).strip().casefold()
+            for (existing_name,) in cur.execute("SELECT DISTINCT team_name FROM quiz_teams").fetchall()
+            if existing_name is not None and str(existing_name).strip()
+        }
+
+        seen_in_import = set()
+        for team in teams:
+            normalized = team["team_name"].strip().casefold()
+            if normalized in seen_in_import:
+                continue
+            seen_in_import.add(normalized)
+            if normalized not in existing_team_names:
+                first_time_teams.append(team["team_name"])
+
     if row is not None:
         event_id = row[0]
         cur.execute(
@@ -357,6 +376,8 @@ def import_quiz_file(excel_path, db_path=DB_PATH_DEFAULT):
         "event_date": event_date,
         "location": location,
         "teams_imported": len(teams),
+        "is_new_event": is_new_event,
+        "first_time_teams": first_time_teams,
         "database": db_path,
     }
 

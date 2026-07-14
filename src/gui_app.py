@@ -158,6 +158,10 @@ class ImportTab(QWidget):
             self.log.appendPlainText(
                 f"Imported {result['teams_imported']} teams from {result['event_date']} @ {result['location']}"
             )
+            if result.get("is_new_event") and result.get("first_time_teams"):
+                self.log.appendPlainText("First-time teams:")
+                for team_name in result["first_time_teams"]:
+                    self.log.appendPlainText(f"- {team_name}")
         except Exception as exc:
             self.log.appendPlainText(f"ERROR: {exc}")
             QMessageBox.critical(self, "Import failed", str(exc))
@@ -175,6 +179,10 @@ class ImportTab(QWidget):
                 self.log.appendPlainText(
                     f"Imported {item['teams_imported']} teams from {item['event_date']} @ {item['location']}"
                 )
+                if item.get("is_new_event") and item.get("first_time_teams"):
+                    self.log.appendPlainText("First-time teams:")
+                    for team_name in item["first_time_teams"]:
+                        self.log.appendPlainText(f"- {team_name}")
 
             if summary.get("errors"):
                 self.log.appendPlainText("\nErrors during import:")
