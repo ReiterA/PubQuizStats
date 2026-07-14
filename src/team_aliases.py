@@ -52,4 +52,7 @@ TEAM_NAME_ALIASES = {
     "Cpqc": "CPQC",
 
     "Schaukels­tuhlöl": "Schaukelstuhlöl",
+
+    "Die gurus und das biest": "Die Gurus und das Biest",
+    "Die Guru's und das Biest": "Die Gurus und das Biest",
 }

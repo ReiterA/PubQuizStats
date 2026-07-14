@@ -49,6 +49,18 @@ def _bonus_points_from_normal_points(round_name: str, normal_points: float) -> f
 def _connect(db_path: str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_themes (
+            event_id INTEGER PRIMARY KEY REFERENCES quiz_events(id) ON DELETE CASCADE,
+            puzzle_category TEXT,
+            puzzle_solution TEXT,
+            image_round_topic TEXT,
+            surprise_round_topic TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     return conn
 
 
@@ -143,7 +155,21 @@ def get_event_result(
     )
     with _connect(db_path) as conn:
         event = conn.execute(
-            "SELECT id, event_date, location, source_file, imported_at FROM quiz_events WHERE id = ?",
+            """
+            SELECT
+                e.id,
+                e.event_date,
+                e.location,
+                e.source_file,
+                e.imported_at,
+                et.puzzle_category,
+                et.puzzle_solution,
+                et.image_round_topic,
+                et.surprise_round_topic
+            FROM quiz_events e
+            LEFT JOIN event_themes et ON et.event_id = e.id
+            WHERE e.id = ?
+            """,
             (resolved_event_id,),
         ).fetchone()
         if event is None:
@@ -290,6 +316,10 @@ def print_event_results(
 
     print(f"Event: {event['event_date']} @ {event['location']} ({event['source_file']})")
     print(f"Imported at: {event['imported_at']}")
+    print(f"Puzzle Kategorie: {event.get('puzzle_category') or '-'}")
+    print(f"Puzzle Lösung: {event.get('puzzle_solution') or '-'}")
+    print(f"Bilderrunde Thema: {event.get('image_round_topic') or '-'}")
+    print(f"Überraschungsrunde Thema: {event.get('surprise_round_topic') or '-'}")
     print(f"Teams: {len(teams)}")
     print()
 

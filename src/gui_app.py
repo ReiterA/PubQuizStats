@@ -90,6 +90,17 @@ class ImportTab(QWidget):
         folder_layout.addWidget(folder_browse)
         folder_layout.addWidget(folder_import)
 
+        theme_box = QGroupBox("Import event themes")
+        theme_layout = QHBoxLayout(theme_box)
+        self.theme_file_path = QLineEdit(os.path.join("data", "themes", "PQ_Themen.xlsx"))
+        theme_browse = QPushButton("Browse...")
+        theme_browse.clicked.connect(self._browse_theme_file)
+        theme_import = QPushButton("Import Themes")
+        theme_import.clicked.connect(self._import_themes)
+        theme_layout.addWidget(self.theme_file_path)
+        theme_layout.addWidget(theme_browse)
+        theme_layout.addWidget(theme_import)
+
         db_row = QHBoxLayout()
         db_row.addWidget(QLabel("Database:"))
         db_row.addWidget(self.db_path)
@@ -101,6 +112,7 @@ class ImportTab(QWidget):
         layout.addLayout(db_row)
         layout.addWidget(file_box)
         layout.addWidget(folder_box)
+        layout.addWidget(theme_box)
         layout.addWidget(QLabel("Import log"))
         layout.addWidget(self.log)
 
@@ -123,6 +135,16 @@ class ImportTab(QWidget):
         path = QFileDialog.getExistingDirectory(self, "Select quiz folder")
         if path:
             self.folder_path.setText(path)
+
+    def _browse_theme_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select themes file",
+            self.theme_file_path.text().strip() or "",
+            "Excel Files (*.xlsx *.xlsm *.xltx *.xltm)",
+        )
+        if path:
+            self.theme_file_path.setText(path)
 
     def _import_file(self):
         path = self.file_path.text().strip()
@@ -165,6 +187,42 @@ class ImportTab(QWidget):
         except Exception as exc:
             self.log.appendPlainText(f"ERROR: {exc}")
             QMessageBox.critical(self, "Import failed", str(exc))
+
+    def _import_themes(self):
+        path = self.theme_file_path.text().strip()
+        db = self.db_path.text().strip()
+        if not path:
+            QMessageBox.warning(self, "Missing input", "Please select a themes file.")
+            return
+
+        try:
+            summary = import_quiz_results.import_event_themes(path, db)
+            self.log.appendPlainText(
+                f"Imported themes: {summary['rows_imported']}/{summary['rows_found']} rows"
+            )
+            if summary.get("errors"):
+                self.log.appendPlainText("Theme import issues:")
+                for err in summary["errors"]:
+                    self.log.appendPlainText(f"Row {err['row']}: {err['message']}")
+
+            if summary.get("rows_failed", 0) > 0:
+                QMessageBox.warning(
+                    self,
+                    "Theme import completed with issues",
+                    (
+                        f"Imported {summary['rows_imported']} of {summary['rows_found']} rows. "
+                        f"Failed: {summary['rows_failed']}"
+                    ),
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Theme import finished",
+                    f"Imported {summary['rows_imported']} rows successfully.",
+                )
+        except Exception as exc:
+            self.log.appendPlainText(f"ERROR: {exc}")
+            QMessageBox.critical(self, "Theme import failed", str(exc))
 
 
 class ReportsTab(QWidget):

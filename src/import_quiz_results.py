@@ -2,13 +2,22 @@ import argparse
 import os
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from openpyxl import load_workbook
 
 from round_config import ROUND_NAMES
 
 DB_PATH_DEFAULT = os.path.join("data", "quiz_results.db")
+
+THEME_EXCEL_HEADERS = [
+    "Datum",
+    "Puzzle Kategorie",
+    "Puzzle Lösung",
+    "Bilderrunde",
+    "Überraschungsrunde",
+]
+PUZZLE_CATEGORIES = {"Stadt", "Land", "Region", "Person", "Song", "Film"}
 
 EVENT_FILE_PATTERN = re.compile(r"(?P<date>\d{8})_(?P<location>.+)\.(xlsx|xlsm|xltx|xltm)$")
 
@@ -73,6 +82,18 @@ def create_schema(conn):
             location TEXT NOT NULL,
             source_file TEXT NOT NULL,
             imported_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_themes (
+            event_id INTEGER PRIMARY KEY REFERENCES quiz_events(id) ON DELETE CASCADE,
+            puzzle_category TEXT,
+            puzzle_solution TEXT,
+            image_round_topic TEXT,
+            surprise_round_topic TEXT,
+            updated_at TEXT NOT NULL
         )
         """
     )
@@ -340,6 +361,180 @@ def import_quiz_file(excel_path, db_path=DB_PATH_DEFAULT):
     }
 
 
+def _normalize_theme_text(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text if text else None
+
+
+def _excel_date_to_iso(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    for pattern in ("%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y", "%Y%m%d"):
+        try:
+            return datetime.strptime(text, pattern).date().isoformat()
+        except ValueError:
+            continue
+
+    raise ValueError(f"Invalid date value '{value}'.")
+
+
+def _read_theme_rows(theme_excel_path):
+    workbook = load_workbook(filename=theme_excel_path, data_only=True)
+    worksheet = workbook.active
+    rows = list(worksheet.iter_rows(values_only=True))
+    if not rows:
+        raise ValueError(f"Theme workbook '{theme_excel_path}' is empty.")
+
+    header = [str(cell).strip() if cell is not None else None for cell in rows[0]]
+    if header[: len(THEME_EXCEL_HEADERS)] != THEME_EXCEL_HEADERS:
+        expected = ", ".join(THEME_EXCEL_HEADERS)
+        found = ", ".join(str(col) for col in header[: len(THEME_EXCEL_HEADERS)])
+        raise ValueError(
+            "Invalid theme header. "
+            f"Expected first columns: {expected}. Found: {found}"
+        )
+
+    parsed_rows = []
+    for row_number, row in enumerate(rows[1:], start=2):
+        if row is None:
+            continue
+
+        date_value = row[0] if len(row) > 0 else None
+        puzzle_category = _normalize_theme_text(row[1] if len(row) > 1 else None)
+        puzzle_solution = _normalize_theme_text(row[2] if len(row) > 2 else None)
+        image_round_topic = _normalize_theme_text(row[3] if len(row) > 3 else None)
+        surprise_round_topic = _normalize_theme_text(row[4] if len(row) > 4 else None)
+
+        if (
+            date_value is None
+            and puzzle_category is None
+            and puzzle_solution is None
+            and image_round_topic is None
+            and surprise_round_topic is None
+        ):
+            continue
+
+        event_date = _excel_date_to_iso(date_value)
+        if event_date is None:
+            raise ValueError(f"Row {row_number}: 'Datum' is required.")
+
+        if puzzle_category is not None and puzzle_category not in PUZZLE_CATEGORIES:
+            allowed = ", ".join(sorted(PUZZLE_CATEGORIES))
+            raise ValueError(
+                f"Row {row_number}: invalid 'Puzzle Kategorie' '{puzzle_category}'. Allowed: {allowed}"
+            )
+
+        parsed_rows.append(
+            {
+                "row_number": row_number,
+                "event_date": event_date,
+                "puzzle_category": puzzle_category,
+                "puzzle_solution": puzzle_solution,
+                "image_round_topic": image_round_topic,
+                "surprise_round_topic": surprise_round_topic,
+            }
+        )
+
+    return parsed_rows
+
+
+def import_event_themes(theme_excel_path, db_path=DB_PATH_DEFAULT):
+    if not os.path.isfile(theme_excel_path):
+        raise ValueError(f"Theme file does not exist: '{theme_excel_path}'")
+
+    rows = _read_theme_rows(theme_excel_path)
+    if not rows:
+        raise ValueError(f"No theme rows found in '{theme_excel_path}'.")
+
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    create_schema(conn)
+
+    imported = 0
+    errors = []
+    updated_at = datetime.now(timezone.utc).isoformat()
+
+    for row in rows:
+        events = conn.execute(
+            "SELECT id, location FROM quiz_events WHERE event_date = ? ORDER BY id",
+            (row["event_date"],),
+        ).fetchall()
+
+        if not events:
+            errors.append(
+                {
+                    "row": row["row_number"],
+                    "message": f"No event found for date {row['event_date']}",
+                }
+            )
+            continue
+
+        if len(events) > 1:
+            locations = ", ".join(location for _event_id, location in events)
+            errors.append(
+                {
+                    "row": row["row_number"],
+                    "message": (
+                        f"Date {row['event_date']} is ambiguous ({len(events)} events: {locations}). "
+                        "Please make date unique or extend mapping rule."
+                    ),
+                }
+            )
+            continue
+
+        event_id = events[0][0]
+        conn.execute(
+            """
+            INSERT INTO event_themes (
+                event_id,
+                puzzle_category,
+                puzzle_solution,
+                image_round_topic,
+                surprise_round_topic,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                puzzle_category = excluded.puzzle_category,
+                puzzle_solution = excluded.puzzle_solution,
+                image_round_topic = excluded.image_round_topic,
+                surprise_round_topic = excluded.surprise_round_topic,
+                updated_at = excluded.updated_at
+            """,
+            (
+                event_id,
+                row["puzzle_category"],
+                row["puzzle_solution"],
+                row["image_round_topic"],
+                row["surprise_round_topic"],
+                updated_at,
+            ),
+        )
+        imported += 1
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "theme_file": theme_excel_path,
+        "rows_found": len(rows),
+        "rows_imported": imported,
+        "rows_failed": len(errors),
+        "database": db_path,
+        "errors": errors,
+    }
+
+
 def import_quiz_folder(folder_path, db_path=DB_PATH_DEFAULT):
     """Import all Excel quiz files from a folder into the database."""
     if not os.path.isdir(folder_path):
@@ -397,7 +592,36 @@ def main():
         default=DB_PATH_DEFAULT,
         help="Path to SQLite database file. Defaults to data/quiz_results.db.",
     )
+    parser.add_argument(
+        "--themes",
+        help=(
+            "Path to event theme Excel file. Must keep columns: "
+            "Datum, Puzzle Kategorie, Puzzle Lösung, Bilderrunde, Überraschungsrunde."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.themes:
+        try:
+            summary = import_event_themes(args.themes, args.db)
+        except Exception as exc:
+            print(f"Theme import failed for '{os.path.basename(args.themes)}':")
+            print(str(exc))
+            raise SystemExit(1)
+
+        print(
+            f"Imported themes: {summary['rows_imported']}/{summary['rows_found']} rows "
+            f"into {summary['database']}"
+        )
+        if summary["errors"]:
+            print()
+            print("Errors during theme import:")
+            for error in summary["errors"]:
+                print(f"- Row {error['row']}: {error['message']}")
+
+        if summary["rows_failed"]:
+            raise SystemExit(1)
+        return
 
     if args.folder:
         summary = import_quiz_folder(args.folder, args.db)
