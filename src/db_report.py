@@ -717,6 +717,173 @@ def print_team_season_results(team_name: str, year: int, db_path: str = DB_PATH_
     print(f"{'Total':>34}  {total_points:>6}")
 
 
+def _normalized_round_points(round_name: str, raw_points: Optional[float], bonus_round_name: Optional[str]) -> Optional[float]:
+    """Normalize points to non-bonus scale when this round was selected as bonus."""
+    if raw_points is None:
+        return None
+
+    points = max(0.0, float(raw_points))
+    selected_bonus = (bonus_round_name or "").strip()
+    if selected_bonus and round_name.casefold() == selected_bonus.casefold():
+        return float(math.floor(points / 2.0))
+    return points
+
+
+def get_team_event_theme_report(
+    team_name: str,
+    db_path: str = DB_PATH_DEFAULT,
+    year: Optional[int] = None,
+) -> Dict:
+    """Return event-wise puzzle/image/surprise details for one team.
+
+    Surprise-round points are normalized to non-bonus scale.
+    """
+    if not team_name or not team_name.strip():
+        raise ValueError("Team name is required.")
+
+    canonical_team = _canonical_team_name(team_name)
+
+    with _connect(db_path) as conn:
+        base_query = """
+            SELECT
+                e.id AS event_id,
+                e.event_date,
+                e.location,
+                qt.id AS team_id,
+                qt.team_name,
+                qt.puzzle_points,
+                qt.bonus_round,
+                et.puzzle_category,
+                et.puzzle_solution,
+                et.image_round_topic,
+                et.surprise_round_topic
+            FROM quiz_events e
+            JOIN quiz_teams qt ON qt.event_id = e.id
+            LEFT JOIN event_themes et ON et.event_id = e.id
+        """
+
+        params: List = []
+        if year is not None:
+            base_query += " WHERE e.event_date LIKE ?"
+            params.append(f"{year:04d}-%")
+
+        base_query += " ORDER BY e.event_date ASC, e.location ASC"
+
+        candidate_rows = conn.execute(base_query, params).fetchall()
+
+        selected_by_event: Dict[int, Dict] = {}
+        for row in candidate_rows:
+            if _canonical_team_name(row["team_name"]) != canonical_team:
+                continue
+
+            event_id = int(row["event_id"])
+            candidate = dict(row)
+            existing = selected_by_event.get(event_id)
+            if existing is None:
+                selected_by_event[event_id] = candidate
+                continue
+
+            # If aliases appear more than once in the same event, keep higher puzzle score.
+            existing_puzzle = -1 if existing["puzzle_points"] is None else int(existing["puzzle_points"])
+            candidate_puzzle = -1 if candidate["puzzle_points"] is None else int(candidate["puzzle_points"])
+            if candidate_puzzle > existing_puzzle:
+                selected_by_event[event_id] = candidate
+
+        if not selected_by_event:
+            scope = f" in {year}" if year is not None else ""
+            raise ValueError(f"No events found for team '{canonical_team}'{scope}.")
+
+        team_ids = [int(row["team_id"]) for row in selected_by_event.values()]
+        placeholders = ",".join("?" * len(team_ids))
+        score_rows = conn.execute(
+            f"""
+            SELECT team_id, round_name, points
+            FROM team_scores
+            WHERE team_id IN ({placeholders})
+            """,
+            team_ids,
+        ).fetchall()
+
+    scores_by_team: Dict[int, Dict[str, Optional[float]]] = {}
+    for row in score_rows:
+        team_id = int(row["team_id"])
+        round_name = str(row["round_name"])
+        scores_by_team.setdefault(team_id, {})[round_name] = row["points"]
+
+    events = []
+    for row in sorted(selected_by_event.values(), key=lambda r: (r["event_date"], r["location"])):
+        team_id = int(row["team_id"])
+        bonus_round = row["bonus_round"]
+        team_round_scores = scores_by_team.get(team_id, {})
+
+        image_points_raw = team_round_scores.get("Bilderrunde")
+        surprise_points_raw = team_round_scores.get("Überraschung")
+        image_points = _normalized_round_points("Bilderrunde", image_points_raw, bonus_round)
+        surprise_points = _normalized_round_points("Überraschung", surprise_points_raw, bonus_round)
+
+        events.append(
+            {
+                "event_id": int(row["event_id"]),
+                "event_date": row["event_date"],
+                "location": row["location"],
+                "team_name": row["team_name"],
+                "puzzle_category": row["puzzle_category"],
+                "puzzle_solution": row["puzzle_solution"],
+                "puzzle_points": row["puzzle_points"],
+                "image_round_category": row["image_round_topic"],
+                "image_round_points": image_points,
+                "surprise_round_category": row["surprise_round_topic"],
+                "surprise_round_points_no_bonus": surprise_points,
+            }
+        )
+
+    return {
+        "team_name": canonical_team,
+        "year": year,
+        "events": events,
+    }
+
+
+def print_team_event_theme_report(
+    team_name: str,
+    db_path: str = DB_PATH_DEFAULT,
+    year: Optional[int] = None,
+) -> None:
+    """Print event-wise puzzle/image/surprise details for one team."""
+    result = get_team_event_theme_report(team_name=team_name, db_path=db_path, year=year)
+
+    year_text = f" ({year})" if year is not None else ""
+    print(f"Team event detail report for {result['team_name']}{year_text}")
+    print()
+
+    rows = result["events"]
+    if not rows:
+        print("No events found.")
+        return
+
+    print(
+        f"{'Date':10}  {'Puzzle Cat.':16}  {'Puzzle Solution':20}  {'Puzzle':>6}  "
+        f"{'Image Cat.':16}  {'Image':>5}  {'Surprise Cat.':16}  {'Surprise':>8}"
+    )
+    print(
+        """----------  ----------------  --------------------  ------  ----------------  -----  ----------------  --------"""
+    )
+    for row in rows:
+        puzzle_points = "-" if row["puzzle_points"] is None else str(row["puzzle_points"])
+        image_points = "-" if row["image_round_points"] is None else f"{row['image_round_points']:.0f}"
+        surprise_points = "-" if row["surprise_round_points_no_bonus"] is None else f"{row['surprise_round_points_no_bonus']:.0f}"
+        print(
+            f"{row['event_date']:10}  "
+            f"{(row['puzzle_category'] or '-')[:16]:16}  "
+            f"{(row['puzzle_solution'] or '-')[:20]:20}  "
+            f"{puzzle_points:>6}  "
+            f"{(row['image_round_category'] or '-')[:16]:16}  "
+            f"{image_points:>5}  "
+            f"{(row['surprise_round_category'] or '-')[:16]:16}  "
+            f"{surprise_points:>8}"
+        )
+
+
 def get_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_DEFAULT) -> Dict:
     """Return average points per round/question for a team in a given year."""
     canonical_team = _canonical_team_name(team_name)
@@ -2979,6 +3146,17 @@ if __name__ == "__main__":
         help="Optional PDF path for the generated chart.",
     )
 
+    team_event_detail_parser = subparsers.add_parser(
+        "team-event-detail",
+        help="Print event-wise puzzle/image/surprise details for one team.",
+    )
+    team_event_detail_parser.add_argument("--team", type=str, required=True, help="Team name to show.")
+    team_event_detail_parser.add_argument(
+        "--year",
+        type=int,
+        help="Optional year filter (e.g. 2026). If omitted, all years are included.",
+    )
+
     args = parser.parse_args()
     if args.command == "list":
         print_event_list(args.db)
@@ -3030,5 +3208,11 @@ if __name__ == "__main__":
             year=args.year,
             top=args.top,
             output_path=args.output,
+            db_path=args.db,
+        )
+    elif args.command == "team-event-detail":
+        print_team_event_theme_report(
+            team_name=args.team,
+            year=args.year,
             db_path=args.db,
         )

@@ -4,13 +4,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from html import escape as html_escape
 from datetime import datetime
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QFontDatabase, QImage, QPainter, QPageLayout
+from PySide6.QtGui import QFont, QFontDatabase, QImage, QPainter, QPageLayout, QTextDocument
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
@@ -267,6 +268,7 @@ class ReportsTab(QWidget):
                 "difficulty",
                 "event-difficulty",
                 "round-strength",
+                "team-event-detail",
             ]
         )
 
@@ -332,11 +334,14 @@ class ReportsTab(QWidget):
         pdf_btn.clicked.connect(self._generate_pdf)
         team_pdf_btn = QPushButton("Generate Team PDF")
         team_pdf_btn.clicked.connect(self._generate_team_pdf)
+        team_event_pdf_btn = QPushButton("Generate Team Event Detail PDF")
+        team_event_pdf_btn.clicked.connect(self._generate_team_event_detail_pdf)
         all_team_pdf_btn = QPushButton("Generate All Team Reports")
         all_team_pdf_btn.clicked.connect(self._generate_all_team_reports)
         btn_row.addWidget(run_btn)
         btn_row.addWidget(pdf_btn)
         btn_row.addWidget(team_pdf_btn)
+        btn_row.addWidget(team_event_pdf_btn)
         btn_row.addWidget(all_team_pdf_btn)
 
         self.soffice_info = QLabel()
@@ -485,6 +490,121 @@ class ReportsTab(QWidget):
         if not safe_team:
             safe_team = "team"
         return f"{safe_team}_{year}_team_report.pdf"
+
+    def _team_event_detail_pdf_default_name(self, team_name: str, year: int) -> str:
+        safe_team = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in team_name.strip()).strip("_")
+        if not safe_team:
+            safe_team = "team"
+        return f"{safe_team}_{year}_team_event_detail.pdf"
+
+    def _format_points_cell(self, value) -> str:
+        if value is None:
+            return "-"
+        as_float = float(value)
+        if as_float.is_integer():
+            return str(int(as_float))
+        return f"{as_float:.1f}"
+
+    def _build_team_event_detail_html(self, report: dict, year: int) -> str:
+        rows = report.get("events", [])
+        title = f"Team Event Detail Report - {report['team_name']} ({year})"
+
+        table_rows = []
+        for row in rows:
+            table_rows.append(
+                "<tr>"
+                f"<td>{html_escape(str(row.get('event_date') or '-'))}</td>"
+                f"<td>{html_escape(str(row.get('puzzle_category') or '-'))}</td>"
+                f"<td>{html_escape(str(row.get('puzzle_solution') or '-'))}</td>"
+                f"<td class='num'>{html_escape(self._format_points_cell(row.get('puzzle_points')))}</td>"
+                f"<td>{html_escape(str(row.get('image_round_category') or '-'))}</td>"
+                f"<td class='num'>{html_escape(self._format_points_cell(row.get('image_round_points')))}</td>"
+                f"<td>{html_escape(str(row.get('surprise_round_category') or '-'))}</td>"
+                f"<td class='num'>{html_escape(self._format_points_cell(row.get('surprise_round_points_no_bonus')))}</td>"
+                "</tr>"
+            )
+
+        return f"""
+<!doctype html>
+<html>
+<head>
+  <meta charset=\"utf-8\" />
+  <style>
+    @page {{ size: A4 landscape; margin: 14mm; }}
+    body {{ font-family: Arial, sans-serif; color: #111827; font-size: 10pt; }}
+    h1 {{ margin: 0 0 6mm 0; font-size: 17pt; }}
+    p.meta {{ margin: 0 0 6mm 0; color: #4b5563; }}
+    table {{ border-collapse: collapse; width: 100%; table-layout: fixed; }}
+    th, td {{ border: 1px solid #d1d5db; padding: 6px 7px; vertical-align: top; word-wrap: break-word; }}
+    th {{ background: #f3f4f6; text-align: left; font-weight: 700; }}
+    td.num {{ text-align: right; }}
+    th:nth-child(1), td:nth-child(1) {{ width: 12%; }}
+    th:nth-child(2), td:nth-child(2) {{ width: 12%; }}
+    th:nth-child(3), td:nth-child(3) {{ width: 17%; }}
+    th:nth-child(4), td:nth-child(4) {{ width: 8%; }}
+    th:nth-child(5), td:nth-child(5) {{ width: 14%; }}
+    th:nth-child(6), td:nth-child(6) {{ width: 8%; }}
+    th:nth-child(7), td:nth-child(7) {{ width: 18%; }}
+    th:nth-child(8), td:nth-child(8) {{ width: 11%; }}
+  </style>
+</head>
+<body>
+  <h1>{html_escape(title)}</h1>
+  <p class=\"meta\">Generated: {html_escape(datetime.now().strftime('%Y-%m-%d %H:%M'))} | Events: {len(rows)}</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Event Date</th>
+        <th>Puzzle Category</th>
+        <th>Puzzle Solution</th>
+        <th>Puzzle Points</th>
+        <th>Image Round Category</th>
+        <th>Image Points</th>
+        <th>Surprise Round Category</th>
+        <th>Surprise Points (no bonus)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {''.join(table_rows)}
+    </tbody>
+  </table>
+</body>
+</html>
+"""
+
+    def _generate_team_event_detail_pdf(self):
+        team_name = self._selected_team_name()
+        if not team_name:
+            QMessageBox.warning(self, "Missing team", "Please select a team before generating the PDF.")
+            return
+
+        db = self.db_path.text().strip()
+        year = self.year.value()
+
+        default_name = self._team_event_detail_pdf_default_name(team_name, year)
+        path, _ = QFileDialog.getSaveFileName(self, "Save team event detail PDF", default_name, "PDF Files (*.pdf)")
+        if not path:
+            return
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+
+        try:
+            report = db_report.get_team_event_theme_report(team_name=team_name, db_path=db, year=year)
+            html = self._build_team_event_detail_html(report, year)
+
+            document = QTextDocument()
+            document.setHtml(html)
+
+            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+            printer.setOutputFileName(path)
+            printer.setPageOrientation(QPageLayout.Orientation.Landscape)
+            document.print_(printer)
+
+            QMessageBox.information(self, "PDF saved", f"Team event detail report saved to:\n{path}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Team Event Detail PDF failed", str(exc))
+            self.output.setPlainText(f"ERROR:\n{exc}")
 
     def _template_values(self, report: dict) -> dict:
         events = report.get("season_events", [])
@@ -999,6 +1119,13 @@ class ReportsTab(QWidget):
                     self.top.value(),
                     team_name,
                     db,
+                )
+            elif report == "team-event-detail":
+                text = self._capture(
+                    db_report.print_team_event_theme_report,
+                    self._selected_team_name(),
+                    db,
+                    self.year.value(),
                 )
             else:
                 text = "Unknown report"
