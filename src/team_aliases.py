@@ -55,4 +55,6 @@ TEAM_NAME_ALIASES = {
 
     "Die gurus und das biest": "Die Gurus und das Biest",
     "Die Guru's und das Biest": "Die Gurus und das Biest",
+
+    "Bastards": "Glorious Bastards",
 }
