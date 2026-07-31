@@ -268,7 +268,7 @@ class ReportsTab(QWidget):
                 "difficulty",
                 "event-difficulty",
                 "round-strength",
-                "team-event-detail",
+                "team-category-detail",
             ]
         )
 
@@ -334,8 +334,8 @@ class ReportsTab(QWidget):
         pdf_btn.clicked.connect(self._generate_pdf)
         team_pdf_btn = QPushButton("Generate Team PDF")
         team_pdf_btn.clicked.connect(self._generate_team_pdf)
-        team_event_pdf_btn = QPushButton("Generate Team Event Detail PDF")
-        team_event_pdf_btn.clicked.connect(self._generate_team_event_detail_pdf)
+        team_event_pdf_btn = QPushButton("Generate Team Category Detail PDF")
+        team_event_pdf_btn.clicked.connect(self._generate_team_category_detail_pdf)
         all_team_pdf_btn = QPushButton("Generate All Team Reports")
         all_team_pdf_btn.clicked.connect(self._generate_all_team_reports)
         btn_row.addWidget(run_btn)
@@ -491,11 +491,11 @@ class ReportsTab(QWidget):
             safe_team = "team"
         return f"{safe_team}_{year}_team_report.pdf"
 
-    def _team_event_detail_pdf_default_name(self, team_name: str, year: int) -> str:
+    def _team_category_detail_pdf_default_name(self, team_name: str, year: int) -> str:
         safe_team = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in team_name.strip()).strip("_")
         if not safe_team:
             safe_team = "team"
-        return f"{safe_team}_{year}_team_event_detail.pdf"
+        return f"{safe_team}_{year}_team_category_detail.pdf"
 
     def _format_points_cell(self, value) -> str:
         if value is None:
@@ -505,9 +505,9 @@ class ReportsTab(QWidget):
             return str(int(as_float))
         return f"{as_float:.1f}"
 
-    def _build_team_event_detail_html(self, report: dict, year: int) -> str:
+    def _build_team_category_detail_html(self, report: dict, year: int) -> str:
         rows = report.get("events", [])
-        title = f"Team Event Detail Report - {report['team_name']} ({year})"
+        title = f"Team Category Detail Report - {report['team_name']} ({year})"
 
         table_rows = []
         for row in rows:
@@ -572,7 +572,7 @@ class ReportsTab(QWidget):
 </html>
 """
 
-    def _generate_team_event_detail_pdf(self):
+    def _generate_team_category_detail_pdf(self):
         team_name = self._selected_team_name()
         if not team_name:
             QMessageBox.warning(self, "Missing team", "Please select a team before generating the PDF.")
@@ -581,8 +581,8 @@ class ReportsTab(QWidget):
         db = self.db_path.text().strip()
         year = self.year.value()
 
-        default_name = self._team_event_detail_pdf_default_name(team_name, year)
-        path, _ = QFileDialog.getSaveFileName(self, "Save team event detail PDF", default_name, "PDF Files (*.pdf)")
+        default_name = self._team_category_detail_pdf_default_name(team_name, year)
+        path, _ = QFileDialog.getSaveFileName(self, "Save team category detail PDF", default_name, "PDF Files (*.pdf)")
         if not path:
             return
         if not path.lower().endswith(".pdf"):
@@ -590,7 +590,7 @@ class ReportsTab(QWidget):
 
         try:
             report = db_report.get_team_event_theme_report(team_name=team_name, db_path=db, year=year)
-            html = self._build_team_event_detail_html(report, year)
+            html = self._build_team_category_detail_html(report, year)
 
             document = QTextDocument()
             document.setHtml(html)
@@ -601,9 +601,9 @@ class ReportsTab(QWidget):
             printer.setPageOrientation(QPageLayout.Orientation.Landscape)
             document.print_(printer)
 
-            QMessageBox.information(self, "PDF saved", f"Team event detail report saved to:\n{path}")
+            QMessageBox.information(self, "PDF saved", f"Team category detail report saved to:\n{path}")
         except Exception as exc:
-            QMessageBox.critical(self, "Team Event Detail PDF failed", str(exc))
+            QMessageBox.critical(self, "Team Category Detail PDF failed", str(exc))
             self.output.setPlainText(f"ERROR:\n{exc}")
 
     def _template_values(self, report: dict) -> dict:
@@ -1120,7 +1120,7 @@ class ReportsTab(QWidget):
                     team_name,
                     db,
                 )
-            elif report == "team-event-detail":
+            elif report == "team-category-detail":
                 text = self._capture(
                     db_report.print_team_event_theme_report,
                     self._selected_team_name(),

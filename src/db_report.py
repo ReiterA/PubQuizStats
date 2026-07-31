@@ -853,7 +853,7 @@ def print_team_event_theme_report(
     result = get_team_event_theme_report(team_name=team_name, db_path=db_path, year=year)
 
     year_text = f" ({year})" if year is not None else ""
-    print(f"Team event detail report for {result['team_name']}{year_text}")
+    print(f"Team category detail report for {result['team_name']}{year_text}")
     print()
 
     rows = result["events"]
@@ -3146,12 +3146,12 @@ if __name__ == "__main__":
         help="Optional PDF path for the generated chart.",
     )
 
-    team_event_detail_parser = subparsers.add_parser(
-        "team-event-detail",
+    team_category_detail_parser = subparsers.add_parser(
+        "team-category-detail",
         help="Print event-wise puzzle/image/surprise details for one team.",
     )
-    team_event_detail_parser.add_argument("--team", type=str, required=True, help="Team name to show.")
-    team_event_detail_parser.add_argument(
+    team_category_detail_parser.add_argument("--team", type=str, required=True, help="Team name to show.")
+    team_category_detail_parser.add_argument(
         "--year",
         type=int,
         help="Optional year filter (e.g. 2026). If omitted, all years are included.",
@@ -3210,7 +3210,7 @@ if __name__ == "__main__":
             output_path=args.output,
             db_path=args.db,
         )
-    elif args.command == "team-event-detail":
+    elif args.command == "team-category-detail":
         print_team_event_theme_report(
             team_name=args.team,
             year=args.year,
