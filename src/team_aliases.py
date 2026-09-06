@@ -36,6 +36,7 @@ TEAM_NAME_ALIASES = {
 
     "Die Quirligen Quiz Hühner": "Die quirligen Quizhühner",
     "Die quirligem Quizhühner": "Die quirligen Quizhühner",
+    "Die quirligen quizhühner": "Die quirligen Quizhühner",
 
     "Schmeckt ein bisschen nussig": "schmeckt ein bisschen nussig",
 

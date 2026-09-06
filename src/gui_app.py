@@ -264,6 +264,7 @@ class ReportsTab(QWidget):
                 "averages",
                 "radar",
                 "bonus-efficiency",
+                "Bonus Details",
                 "consistency",
                 "difficulty",
                 "event-difficulty",
@@ -1098,6 +1099,13 @@ class ReportsTab(QWidget):
             elif report == "bonus-efficiency":
                 text = self._capture(
                     db_report.print_team_bonus_efficiency_report,
+                    self._selected_team_name(),
+                    self.year.value(),
+                    db,
+                )
+            elif report == "Bonus Details":
+                text = self._capture(
+                    db_report.print_bonus_details_report,
                     self._selected_team_name(),
                     self.year.value(),
                     db,

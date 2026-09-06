@@ -25,6 +25,17 @@ TEAM_REPORT_ROUND_MAX_POINTS = {
     "Musik": 5,
 }
 TEAM_REPORT_PUZZLE_MAX_POINTS = 10
+BONUS_DETAILS_EXCLUDED_ROUNDS = {"Puzzle", "Bilderrunde"}
+
+BONUS_DETAILS_INTERESSANTES_POINTS = {
+    0: 0.0,
+    1: 2.0,
+    2: 3.857,
+    3: 5.5,
+    4: 7.143,
+    5: 9.0,
+    6: 11.0,
+}
 
 
 def _bonus_points_from_normal_points(round_name: str, normal_points: float) -> float:
@@ -44,6 +55,20 @@ def _bonus_points_from_normal_points(round_name: str, normal_points: float) -> f
         return float(min(5, rounded - 1))
 
     return points
+
+
+def _bonus_details_points_from_normal_points(round_name: str, normal_points: float) -> float:
+    """Return hypothetical bonus points for the new bonus-details report."""
+    if round_name in BONUS_DETAILS_EXCLUDED_ROUNDS:
+        return 0.0
+
+    rounded = int(max(0.0, float(normal_points)))
+    if round_name == "Interessantes":
+        capped = min(6, rounded)
+        return BONUS_DETAILS_INTERESSANTES_POINTS.get(capped, 0.0)
+
+    capped = min(5, rounded)
+    return float(capped * 2)
 
 
 def _connect(db_path: str):
@@ -1777,6 +1802,115 @@ def print_team_bonus_efficiency_report(
         print(f"Average bonus efficiency: {average * 100:.1f}%")
 
 
+def get_bonus_details_report(
+    team_name: str,
+    year: int,
+    db_path: str = DB_PATH_DEFAULT,
+) -> Dict:
+    """Return hypothetical bonus totals per eligible round for one team and year."""
+    canonical_team = _canonical_team_name(team_name)
+    season_result = get_team_season_results(team_name, year, db_path)
+    events = season_result["events"]
+
+    team_ids = [event["team_id"] for event in events if event.get("team_id") is not None]
+    if not team_ids:
+        return {
+            "team_name": canonical_team,
+            "year": year,
+            "events_count": 0,
+            "rounds": [],
+        }
+
+    placeholders = ",".join("?" * len(team_ids))
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT ts.team_id, ts.round_name, ts.points, qt.bonus_round
+            FROM team_scores ts
+            JOIN quiz_teams qt ON qt.id = ts.team_id
+            WHERE ts.team_id IN ({placeholders})
+              AND ts.points IS NOT NULL
+            """,
+            team_ids,
+        ).fetchall()
+
+    per_round: Dict[str, Dict[str, float]] = {}
+    for row in rows:
+        round_name = str(row["round_name"])
+        if round_name in BONUS_DETAILS_EXCLUDED_ROUNDS:
+            continue
+
+        normalized_points = _normalized_round_points(round_name, row["points"], row["bonus_round"])
+        if normalized_points is None:
+            continue
+
+        bucket = per_round.setdefault(
+            round_name,
+            {
+                "round_name": round_name,
+                "events": 0,
+                "normal_points_total": 0.0,
+                "hypothetical_bonus_points_total": 0.0,
+            },
+        )
+        bucket["events"] += 1
+        bucket["normal_points_total"] += float(normalized_points)
+        bucket["hypothetical_bonus_points_total"] += _bonus_details_points_from_normal_points(
+            round_name,
+            normalized_points,
+        )
+
+    round_order = {name: idx for idx, name in ROUND_NAMES.items()}
+    round_rows = []
+    for row in sorted(per_round.values(), key=lambda item: round_order.get(item["round_name"], 999)):
+        events_count = int(row["events"])
+        normal_total = float(row["normal_points_total"])
+        bonus_total = float(row["hypothetical_bonus_points_total"])
+        round_rows.append(
+            {
+                **row,
+                "normal_points_avg": (normal_total / events_count) if events_count else 0.0,
+                "hypothetical_bonus_points_avg": (bonus_total / events_count) if events_count else 0.0,
+            }
+        )
+
+    return {
+        "team_name": canonical_team,
+        "year": year,
+        "events_count": len(events),
+        "rounds": round_rows,
+    }
+
+
+def print_bonus_details_report(
+    team_name: str,
+    year: int,
+    db_path: str = DB_PATH_DEFAULT,
+) -> None:
+    """Print hypothetical bonus totals per category for one team and year."""
+    result = get_bonus_details_report(team_name=team_name, year=year, db_path=db_path)
+    rounds = result["rounds"]
+
+    print(f"Bonus Details for {result['team_name']} ({result['year']})")
+    print(f"Events: {result['events_count']}")
+    print("Excluded: Puzzle, Bilderrunde")
+    print()
+
+    if not rounds:
+        print("No eligible round data found for this team in this year.")
+        return
+
+    print(
+        f"{'Category':20}  {'Events':>6}  {'Normal Avg':>10}  {'Bonus Avg':>9}  {'Bonus Total':>11}"
+    )
+    print("""--------------------  ------  ----------  ---------  -----------""")
+    for row in rounds:
+        print(
+            f"{row['round_name'][:20]:20}  {row['events']:>6}  {row['normal_points_avg']:>10.2f}  "
+            f"{row['hypothetical_bonus_points_avg']:>9.3f}  {row['hypothetical_bonus_points_total']:>11.3f}"
+        )
+
+
 def get_team_profile_report(
     team_name: str,
     year: int,
@@ -3146,6 +3280,13 @@ if __name__ == "__main__":
         help="Optional PDF path for the generated chart.",
     )
 
+    bonus_details_parser = subparsers.add_parser(
+        "bonus-details",
+        help="Show hypothetical bonus totals per category for one team and year.",
+    )
+    bonus_details_parser.add_argument("--team", type=str, required=True, help="Team name to show.")
+    bonus_details_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
+
     team_category_detail_parser = subparsers.add_parser(
         "team-category-detail",
         help="Print event-wise puzzle/image/surprise details for one team.",
@@ -3208,6 +3349,12 @@ if __name__ == "__main__":
             year=args.year,
             top=args.top,
             output_path=args.output,
+            db_path=args.db,
+        )
+    elif args.command == "bonus-details":
+        print_bonus_details_report(
+            team_name=args.team,
+            year=args.year,
             db_path=args.db,
         )
     elif args.command == "team-category-detail":
