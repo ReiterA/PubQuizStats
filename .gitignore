@@ -12,6 +12,7 @@ wheels/
 # Temporary output folders
 tmp/
 data/tmp/
+data/TeamReports/
 
 # Program/editor temporary files
 ~$*

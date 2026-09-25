@@ -1622,12 +1622,16 @@ def render_team_report_event_bars_svg(result: Dict, output_path: Optional[str] =
             f'<rect x="{position_x:.1f}" y="{position_y:.1f}" width="{bar_width:.1f}" height="{position_bar_height:.1f}" rx="7" fill="#f97316" />'
         )
 
+        points_label_x = points_x + bar_width / 2
+        points_label_y = max(20.0, points_y - 42)
+        position_label_x = position_x + bar_width / 2
+        position_label_y = max(20.0, position_y - 42)
         value_labels.append(
-            f'<text x="{(points_x + bar_width / 2):.1f}" y="{max(20.0, points_y - 10):.1f}" text-anchor="middle" font-size="18" font-weight="600" fill="#1e3a8a">{points_value:.0f} Pts</text>'
+            f'<text x="{points_label_x:.1f}" y="{points_label_y:.1f}" text-anchor="middle" font-size="16" font-weight="600" fill="#1e3a8a" transform="rotate(-90 {points_label_x:.1f} {points_label_y:.1f})">{points_value:.0f} Pts</text>'
         )
         pos_label = f"Pos. {int(position_value)}" if position_value is not None else "Pos. -"
         value_labels.append(
-            f'<text x="{(position_x + bar_width / 2):.1f}" y="{max(20.0, position_y - 10):.1f}" text-anchor="middle" font-size="18" font-weight="600" fill="#c2410c">{pos_label}</text>'
+            f'<text x="{position_label_x:.1f}" y="{position_label_y:.1f}" text-anchor="middle" font-size="16" font-weight="600" fill="#c2410c" transform="rotate(-90 {position_label_x:.1f} {position_label_y:.1f})">{pos_label}</text>'
         )
 
         date_text = escape(str(event.get("event_date", "")))
