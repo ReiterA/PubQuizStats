@@ -2410,6 +2410,134 @@ def print_event_difficulty_report(
         )
 
 
+def get_theme_difficulty_report(
+    year: Optional[int] = None,
+    db_path: str = DB_PATH_DEFAULT,
+) -> Dict:
+    """Return average points by event theme for Puzzle, Bild and Surprise rounds."""
+    with _connect(db_path) as conn:
+        year_filter = ""
+        params: List = []
+        if year is not None:
+            year_filter = " WHERE e.event_date LIKE ?"
+            params.append(f"{year:04d}-%")
+
+        puzzle_points_query = """
+            SELECT qt.event_id, AVG(CAST(qt.puzzle_points AS REAL)) AS puzzle_average_points
+            FROM quiz_teams qt
+            GROUP BY qt.event_id
+        """
+        round_points_query = """
+            SELECT
+                qt.event_id,
+                ts.round_name,
+                AVG(
+                    CASE
+                        WHEN LOWER(COALESCE(qt.bonus_round, '')) = LOWER(ts.round_name) THEN
+                            CASE
+                                WHEN ts.points % 2 = 0 THEN ts.points / 2.0
+                                ELSE (ts.points - 1) / 2.0
+                            END
+                        ELSE ts.points
+                    END
+                ) AS avg_points
+            FROM team_scores ts
+            JOIN quiz_teams qt ON qt.id = ts.team_id
+            GROUP BY qt.event_id, ts.round_name
+        """
+
+        puzzle_rows = conn.execute(puzzle_points_query).fetchall()
+        round_rows = conn.execute(round_points_query).fetchall()
+
+        event_rows = conn.execute(
+            f"""
+            SELECT
+                e.id AS event_id,
+                e.event_date,
+                e.location,
+                et.puzzle_category,
+                et.puzzle_solution,
+                et.image_round_topic,
+                et.surprise_round_topic
+            FROM quiz_events e
+            LEFT JOIN event_themes et ON et.event_id = e.id
+            {year_filter}
+            ORDER BY e.event_date ASC, e.location ASC
+            """,
+            params,
+        ).fetchall()
+
+    puzzle_by_event = {int(row["event_id"]): float(row["puzzle_average_points"]) for row in puzzle_rows if row["puzzle_average_points"] is not None}
+    round_by_event: Dict[int, Dict[str, float]] = {}
+    for row in round_rows:
+        event_id = int(row["event_id"])
+        round_name = str(row["round_name"])
+        round_by_event.setdefault(event_id, {})[round_name] = float(row["avg_points"])
+
+    events = []
+    for row in event_rows:
+        event_id = int(row["event_id"])
+        events.append(
+            {
+                "event_id": event_id,
+                "event_date": row["event_date"],
+                "location": row["location"],
+                "puzzle_category": row["puzzle_category"],
+                "puzzle_solution": row["puzzle_solution"],
+                "puzzle_average_points": puzzle_by_event.get(event_id),
+                "image_round_topic": row["image_round_topic"],
+                "image_average_points": round_by_event.get(event_id, {}).get("Bilderrunde"),
+                "surprise_round_topic": row["surprise_round_topic"],
+                "surprise_average_points": round_by_event.get(event_id, {}).get("Überraschung"),
+            }
+        )
+
+    return {
+        "year": year,
+        "events_count": len(events),
+        "events": events,
+    }
+
+
+def print_theme_difficulty_report(
+    year: Optional[int] = None,
+    db_path: str = DB_PATH_DEFAULT,
+) -> None:
+    """Print average points per round theme for each event."""
+    result = get_theme_difficulty_report(year=year, db_path=db_path)
+    events = result["events"]
+    year_text = f" ({year})" if year is not None else ""
+
+    print(f"Theme difficulty report{year_text}")
+    print()
+
+    if not events:
+        print("No event data found.")
+        return
+
+    print(
+        f"{'Date':10}  {'Location':20}  {'Puzzle':>12}  {'Puzzle Theme':16}  {'Puzzle Solution':18}  {'Image':>9}  {'Image Theme':16}  {'Surprise':>10}  {'Surprise Theme':16}"
+    )
+    print(
+        """----------  --------------------  ------------  ----------------  ------------------  ---------  ----------------  ----------  ----------------"""
+    )
+    for event in events:
+        puzzle_avg = "-" if event["puzzle_average_points"] is None else f"{event['puzzle_average_points']:.2f}"
+        image_avg = "-" if event["image_average_points"] is None else f"{event['image_average_points']:.2f}"
+        surprise_avg = "-" if event["surprise_average_points"] is None else f"{event['surprise_average_points']:.2f}"
+        print(
+            f"{event['event_date']:10}  "
+            f"{(event['location'] or '-')[:20]:20}  "
+            f"{puzzle_avg:>12}  "
+            f"{(event['puzzle_category'] or '-')[:16]:16}  "
+            f"{(event['puzzle_solution'] or '-')[:18]:18}  "
+            f"{image_avg:>9}  "
+            f"{(event['image_round_topic'] or '-')[:16]:16}  "
+            f"{surprise_avg:>10}  "
+            f"{(event['surprise_round_topic'] or '-')[:16]:16}"
+        )
+
+
 def get_round_strength_ranking(
     year: int,
     round_name: Optional[str] = None,
@@ -3291,6 +3419,16 @@ if __name__ == "__main__":
     bonus_details_parser.add_argument("--team", type=str, required=True, help="Team name to show.")
     bonus_details_parser.add_argument("--year", type=int, required=True, help="Year, e.g. 2026")
 
+    theme_difficulties_parser = subparsers.add_parser(
+        "theme-difficulties",
+        help="Print average points per theme for Puzzle, Bilderrunde, and Überraschung by event.",
+    )
+    theme_difficulties_parser.add_argument(
+        "--year",
+        type=int,
+        help="Optional year filter (e.g. 2026). If omitted, all years are included.",
+    )
+
     team_category_detail_parser = subparsers.add_parser(
         "team-category-detail",
         help="Print event-wise puzzle/image/surprise details for one team.",
@@ -3358,6 +3496,11 @@ if __name__ == "__main__":
     elif args.command == "bonus-details":
         print_bonus_details_report(
             team_name=args.team,
+            year=args.year,
+            db_path=args.db,
+        )
+    elif args.command == "theme-difficulties":
+        print_theme_difficulty_report(
             year=args.year,
             db_path=args.db,
         )

@@ -266,6 +266,7 @@ class ReportsTab(QWidget):
                 "bonus-efficiency",
                 "Bonus Details",
                 "consistency",
+                "Theme Difficulties",
                 "difficulty",
                 "event-difficulty",
                 "round-strength",
@@ -333,6 +334,8 @@ class ReportsTab(QWidget):
         run_btn.clicked.connect(self._run_report)
         pdf_btn = QPushButton("Generate Text PDF")
         pdf_btn.clicked.connect(self._generate_pdf)
+        theme_pdf_btn = QPushButton("Generate Theme PDF")
+        theme_pdf_btn.clicked.connect(self._generate_theme_difficulty_pdf)
         team_pdf_btn = QPushButton("Generate Team PDF")
         team_pdf_btn.clicked.connect(self._generate_team_pdf)
         team_event_pdf_btn = QPushButton("Generate Team Category Detail PDF")
@@ -341,6 +344,7 @@ class ReportsTab(QWidget):
         all_team_pdf_btn.clicked.connect(self._generate_all_team_reports)
         btn_row.addWidget(run_btn)
         btn_row.addWidget(pdf_btn)
+        btn_row.addWidget(theme_pdf_btn)
         btn_row.addWidget(team_pdf_btn)
         btn_row.addWidget(team_event_pdf_btn)
         btn_row.addWidget(all_team_pdf_btn)
@@ -485,6 +489,109 @@ class ReportsTab(QWidget):
 
         self.output.print_(printer)
         QMessageBox.information(self, "PDF saved", f"Report saved to:\n{path}")
+
+    def _theme_difficulty_pdf_default_name(self, year: int) -> str:
+        return f"theme_difficulties_{year}.pdf"
+
+    def _build_theme_difficulty_html(self, report: dict, year: int) -> str:
+        rows = report.get("events", [])
+        title = f"Theme Difficulties Report ({year})" if year is not None else "Theme Difficulties Report"
+
+        event_blocks = []
+        for index, row in enumerate(rows):
+            category_lines = [
+                (
+                    "Puzzle",
+                    row.get("puzzle_category") or "-",
+                    row.get("puzzle_solution") or "-",
+                    self._format_points_cell(row.get("puzzle_average_points")),
+                ),
+                (
+                    "Bilderrunde",
+                    row.get("image_round_topic") or "-",
+                    "-",
+                    self._format_points_cell(row.get("image_average_points")),
+                ),
+                (
+                    "Überraschung",
+                    row.get("surprise_round_topic") or "-",
+                    "-",
+                    self._format_points_cell(row.get("surprise_average_points")),
+                ),
+            ]
+            lines_html = "".join(
+                f"<div class='category-line'><span class='category-name'>{html_escape(label)}:</span> "
+                f"{html_escape(avg)} Pts / {html_escape(theme)}"
+                f"{(' / ' + html_escape(solution)) if label == 'Puzzle' and solution and solution != '-' else ''}</div>"
+                for label, theme, solution, avg in category_lines
+            )
+            event_blocks.append(
+                f"""
+                <div class=\"event-block\" style=\"page-break-inside: avoid; break-inside: avoid;\">
+                  <div class=\"event-header\">{html_escape(str(row.get('event_date') or '-'))} {html_escape(str(row.get('location') or '-'))}</div>
+                  {lines_html}
+                </div>
+                """
+            )
+            if (index + 1) % 5 == 0 and (index + 1) < len(rows):
+                event_blocks.append('<div class="page-break-spacer" style="page-break-after: always; break-after: page; height: 0; margin: 0;">&nbsp;</div>')
+
+        return f"""
+<!doctype html>
+<html>
+<head>
+  <meta charset=\"utf-8\" />
+  <style>
+    @page {{ size: A4 portrait; margin: 12mm; }}
+    body {{ font-family: Arial, sans-serif; color: #111827; font-size: 11pt; line-height: 1.5; }}
+    h1 {{ margin: 0 0 6mm 0; font-size: 18pt; font-weight: 700; }}
+    p.meta {{ margin: 0 0 6mm 0; color: #4b5563; }}
+    .event-block {{ margin: 0 0 14px 0; padding: 0 0 8px 0; page-break-inside: avoid; break-inside: avoid; page-break-before: auto; }}
+    .event-header {{ font-size: 19pt; font-weight: 700; margin: 0 0 8px 0; }}
+    .category-line {{ margin: 0 0 6px 0; font-size: 14pt; }}
+    .category-name {{ font-weight: 700; }}
+  </style>
+</head>
+<body>
+  <h1>{html_escape(title)}</h1>
+  <p class=\"meta\">Generated: {html_escape(datetime.now().strftime('%Y-%m-%d %H:%M'))} | Events: {len(rows)}</p>
+  {''.join(event_blocks)}
+</body>
+</html>
+"""
+
+    def _generate_theme_difficulty_pdf(self):
+        if self.report_type.currentText() != "Theme Difficulties":
+            QMessageBox.warning(self, "Wrong report", "Please select 'Theme Difficulties' in the report list before generating the PDF.")
+            return
+
+        db = self.db_path.text().strip()
+        year = self.year.value()
+
+        default_name = self._theme_difficulty_pdf_default_name(year)
+        path, _ = QFileDialog.getSaveFileName(self, "Save theme difficulty PDF", default_name, "PDF Files (*.pdf)")
+        if not path:
+            return
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+
+        try:
+            report = db_report.get_theme_difficulty_report(year=year, db_path=db)
+            html = self._build_theme_difficulty_html(report, year)
+
+            document = QTextDocument()
+            document.setHtml(html)
+
+            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+            printer.setOutputFileName(path)
+            printer.setPageOrientation(QPageLayout.Orientation.Portrait)
+            document.print_(printer)
+
+            QMessageBox.information(self, "PDF saved", f"Theme difficulty report saved to:\n{path}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Theme difficulty PDF failed", str(exc))
+            self.output.setPlainText(f"ERROR:\n{exc}")
 
     def _team_pdf_default_name(self, team_name: str, year: int) -> str:
         safe_team = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in team_name.strip()).strip("_")
@@ -1112,6 +1219,8 @@ class ReportsTab(QWidget):
                 )
             elif report == "consistency":
                 text = self._capture(db_report.print_consistency_report, self.year.value(), self.min_events.value(), db)
+            elif report == "Theme Difficulties":
+                text = self._capture(db_report.print_theme_difficulty_report, self.year.value(), db)
             elif report == "difficulty":
                 text = self._capture(db_report.print_round_difficulty_report, self.year.value(), db)
             elif report == "event-difficulty":
