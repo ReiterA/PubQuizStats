@@ -35,9 +35,9 @@ Activate the virtual environment:
 source .venv/bin/activate
 ```
 
-## Run the GUI
+## Run the web GUI
 
-Start the desktop application with:
+Start the web application with:
 
 ```bash
 ./start_gui.sh
@@ -46,10 +46,11 @@ Start the desktop application with:
 You can also launch it directly from Python:
 
 ```bash
-python main.py
+python main.py            # opens http://localhost:8765 in your browser
+python main.py --port 9000 --no-browser
 ```
 
-The GUI provides tabs for importing quiz data, running reports, and editing configuration.
+The web GUI (modern, light/dark design) covers all former desktop features: importing quiz files and event themes (drag & drop), every report with interactive charts plus the original text output, PDF exports (team report, team category detail, theme difficulties, standing progress, text report), batch generation of all team reports (with ZIP download) and settings. By default it only listens on `127.0.0.1`; use `--host` to change that.
 
 ## Import data
 
@@ -93,7 +94,9 @@ Other useful commands include `result`, `averages`, `radar`, `consistency`, `dif
 ## Project Layout
 
 - `main.py` - application entry point
-- `src/gui_app.py` - PySide6 GUI
+- `src/web_app.py` - web server and JSON API
+- `src/report_export.py` - PDF/DOCX export helpers (PySide6 is only used for rendering)
+- `web/` - web frontend (HTML/CSS/JS, bundled Chart.js in `web/vendor/`)
 - `src/import_quiz_results.py` - import logic and CLI
 - `src/db_report.py` - report generation and CLI
 - `data/` - database, themes, and imported files
@@ -101,4 +104,5 @@ Other useful commands include `result`, `averages`, `radar`, `consistency`, `dif
 ## Notes
 
 - Generated outputs, PDFs, charts, and database files are kept in the `data/` folder unless you choose a different path.
+- Batch team reports are written to `data/exports/`.
 - The GUI and CLI share the same underlying import and reporting code, so changes to the database are immediately reflected in reports.

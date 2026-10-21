@@ -6,13 +6,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import db_report
-from gui_app import ReportsTab
+from report_export import build_theme_difficulty_html
 from import_quiz_results import create_schema
 
 
 class ThemeDifficultyReportTests(unittest.TestCase):
     def test_theme_difficulty_html_uses_five_events_per_page(self):
-        tab = ReportsTab.__new__(ReportsTab)
         report = {
             "events": [
                 {
@@ -84,7 +83,7 @@ class ThemeDifficultyReportTests(unittest.TestCase):
             ]
         }
 
-        html = tab._build_theme_difficulty_html(report, 2026)
+        html = build_theme_difficulty_html(report, 2026)
 
         self.assertNotIn("page-break-before: always;", html)
         self.assertIn("page-break-inside: avoid;", html)
