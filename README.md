@@ -27,6 +27,14 @@ pip install -r requirements.txt
 
 The project uses a local SQLite database stored at `data/quiz_results.db` by default.
 
+## Activate the virtual environment
+
+Activate the virtual environment:
+
+```bash
+source .venv/bin/activate
+```
+
 ## Run the GUI
 
 Start the desktop application with:
