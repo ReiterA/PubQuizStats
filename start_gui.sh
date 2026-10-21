@@ -9,4 +9,4 @@ if [[ -f ".venv/bin/activate" ]]; then
   . .venv/bin/activate
 fi
 
-python src/gui_app.py
+python src/web_app.py "$@"
