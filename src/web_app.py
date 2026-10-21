@@ -1,10 +1,13 @@
 """Web based GUI for PubQuizStats (standard library HTTP server + JSON API)."""
 
 import argparse
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
 import re
+import secrets
 import sys
 import tempfile
 import threading
@@ -36,6 +39,36 @@ QUIZ_DIR = PROJECT_ROOT / "data" / "quizzes"
 EXPORT_DIR = PROJECT_ROOT / "data" / "exports"
 DEFAULT_DB = "data/quiz_results.db"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+# Public hosting: with PQS_ADMIN_PASSWORD set, visitors are read-only guests and only a
+# logged-in admin may import, change settings or generate reports/exports.
+# Without it (local use) everybody is admin.
+ADMIN_PASSWORD = os.environ.get("PQS_ADMIN_PASSWORD", "")
+SESSION_SECRET = (os.environ.get("PQS_SECRET") or "").encode() or secrets.token_bytes(32)
+TRUST_PROXY = os.environ.get("PQS_TRUST_PROXY", "") == "1"
+ALLOWED_HOSTS = {h.strip().lower() for h in os.environ.get("PQS_ALLOWED_HOSTS", "").split(",") if h.strip()}
+SESSION_COOKIE = "pqs_session"
+SESSION_TTL = 12 * 3600
+LOGIN_WINDOW = 600
+LOGIN_MAX_FAILS = 5
+LOGIN_FAILS: dict[str, list[float]] = {}
+LOGIN_LOCK = threading.Lock()
+
+
+def _sign(payload: str) -> str:
+    return hmac.new(SESSION_SECRET, payload.encode(), hashlib.sha256).hexdigest()
+
+
+def make_session_token() -> str:
+    expires = str(int(time.time()) + SESSION_TTL)
+    return f"{expires}.{_sign(expires)}"
+
+
+def valid_session_token(token: str) -> bool:
+    expires, _, signature = (token or "").partition(".")
+    if not expires.isdigit() or not hmac.compare_digest(signature, _sign(expires)):
+        return False
+    return int(expires) > time.time()
 
 REPORT_TYPES = [
     "list",
@@ -411,6 +444,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "same-origin")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-ancestors 'none'",
+        )
         for key, value in (extra_headers or {}).items():
             self.send_header(key, value)
         self.end_headers()
@@ -422,7 +462,51 @@ class Handler(BaseHTTPRequestHandler):
 
     def _host_allowed(self) -> bool:
         host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
+        if ALLOWED_HOSTS:
+            return host in ALLOWED_HOSTS or host in {"localhost", "127.0.0.1", "::1"}
         return host in {"localhost", "127.0.0.1", "::1"} or self.server.allow_remote
+
+    def _client_ip(self) -> str:
+        if TRUST_PROXY:
+            forwarded = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+            if forwarded:
+                return forwarded
+        return self.client_address[0]
+
+    def _cookie(self, name: str) -> str:
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            key, _, value = part.strip().partition("=")
+            if key == name:
+                return value
+        return ""
+
+    def _is_admin(self) -> bool:
+        return not ADMIN_PASSWORD or valid_session_token(self._cookie(SESSION_COOKIE))
+
+    def _require_admin(self):
+        if not self._is_admin():
+            raise ApiError("Admin login required.", HTTPStatus.FORBIDDEN)
+
+    def _session_cookie_header(self, token: str, max_age: int) -> dict:
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" and TRUST_PROXY else ""
+        return {"Set-Cookie": f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{secure}"}
+
+    def _login(self):
+        ip = self._client_ip()
+        now = time.time()
+        with LOGIN_LOCK:
+            fails = [t for t in LOGIN_FAILS.get(ip, []) if now - t < LOGIN_WINDOW]
+            LOGIN_FAILS[ip] = fails
+            if len(fails) >= LOGIN_MAX_FAILS:
+                raise ApiError("Too many failed attempts. Try again later.", HTTPStatus.TOO_MANY_REQUESTS)
+        password = str(self._json_body().get("password") or "")
+        if not ADMIN_PASSWORD or not hmac.compare_digest(password.encode(), ADMIN_PASSWORD.encode()):
+            with LOGIN_LOCK:
+                LOGIN_FAILS.setdefault(ip, []).append(now)
+            time.sleep(0.5)
+            raise ApiError("Wrong password.", HTTPStatus.UNAUTHORIZED)
+        body = json.dumps({"ok": True}).encode()
+        self._send(HTTPStatus.OK, body, "application/json", self._session_cookie_header(make_session_token(), SESSION_TTL))
 
     def _dispatch(self, method: str):
         if not self._host_allowed():
@@ -473,6 +557,15 @@ class Handler(BaseHTTPRequestHandler):
     def _api(self, method: str, path: str, p: Params):
         route = path[len("/api/"):].strip("/")
 
+        if route == "login" and method == "POST":
+            return self._login()
+        if route == "logout" and method == "POST":
+            body = json.dumps({"ok": True}).encode()
+            return self._send(HTTPStatus.OK, body, "application/json", self._session_cookie_header("", 0))
+
+        if method == "POST" or route.startswith(("export/", "jobs/")):
+            self._require_admin()
+
         if method == "GET":
             if route == "meta":
                 return self._json(self._meta())
@@ -511,6 +604,8 @@ class Handler(BaseHTTPRequestHandler):
             body = self._json_body()
             settings = load_settings()
             for key in ("default_team", "db_path"):
+                if key == "db_path" and ADMIN_PASSWORD:
+                    continue  # remote deployments keep a fixed database
                 if key in body:
                     settings[key] = str(body[key]).strip()
             save_settings(settings)
@@ -521,6 +616,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(import_themes_upload(self))
         if route == "import/folder":
             folder = str(self._json_body().get("path") or "").strip() or str(QUIZ_DIR)
+            if ADMIN_PASSWORD:
+                folder = str(QUIZ_DIR)
             if not os.path.isdir(folder):
                 raise ApiError(f"Folder not found: {folder}")
             return self._json(import_quiz_results.import_quiz_folder(folder, current_db()))
@@ -539,14 +636,17 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             events, error = [], str(exc)
         years = sorted({int(str(e["event_date"])[:4]) for e in events if e.get("event_date")}, reverse=True)
+        admin = self._is_admin()
         return {
-            "db_path": db,
-            "db_error": error,
+            "role": "admin" if admin else "guest",
+            "auth_required": bool(ADMIN_PASSWORD),
+            "db_path": db if admin else "",
+            "db_error": error if admin else None,
             "default_team": settings.get("default_team", ""),
             "events": events,
             "years": years or [time.localtime().tm_year],
             "rounds": list(ROUND_NAMES.values()),
-            "converter": report_export.detect_office_converter(),
+            "converter": report_export.detect_office_converter() if admin else None,
         }
 
 

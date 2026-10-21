@@ -25,3 +25,7 @@ data/exports/
 *.swo
 *.orig
 
+
+# Deployment secrets and backups
+.env
+backups/

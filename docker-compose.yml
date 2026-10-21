@@ -1,0 +1,31 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      PQS_ADMIN_PASSWORD: ${PQS_ADMIN_PASSWORD:?set in .env}
+      PQS_SECRET: ${PQS_SECRET:?set in .env}
+      PQS_ALLOWED_HOSTS: ${PQS_DOMAIN:?set in .env}
+      PQS_TRUST_PROXY: "1"
+    volumes:
+      - ./data:/app/data
+    expose:
+      - "8765"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PQS_DOMAIN: ${PQS_DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
