@@ -467,7 +467,7 @@ function buildNav() {
       html += `<button class="nav-item" data-view="${esc(key)}"><span class="ico">${r.ico}</span>${esc(r.label)}</button>`;
     });
   });
-  html += `<div class="nav-group">Verwaltung</div>
+  if (isAdmin()) html += `<div class="nav-group">Verwaltung</div>
     <button class="nav-item" data-view="__import"><span class="ico">📥</span>Import</button>
     <button class="nav-item" data-view="__export"><span class="ico">🗃️</span>Team-Reports</button>
     <button class="nav-item" data-view="__config"><span class="ico">⚙️</span>Einstellungen</button>`;
@@ -476,6 +476,7 @@ function buildNav() {
 }
 
 function navigate(view) {
+  if (ADMIN_VIEWS.includes(view) && !isAdmin()) view = "standings";
   state.view = view;
   state.tab = "charts";
   location.hash = encodeURIComponent(view);
@@ -534,8 +535,12 @@ function renderFilters(def) {
   bind("#f-top", "top");
 }
 
+const isAdmin = () => state.meta?.role === "admin";
+const ADMIN_VIEWS = ["__import", "__export", "__config"];
+
 function renderActions(def) {
   const box = $("#actions");
+  if (!isAdmin()) { box.innerHTML = ""; return; }
   let html = "";
   const teamNeeded = def.needs.includes("team") && !def.needs.includes("round");
   if (def.teamExports) html += `<button class="btn" data-export="team-pdf">📄 Team-Report (PDF)</button>`;
@@ -783,6 +788,32 @@ async function loadTeams() {
   try { state.teams = (await api("/api/teams", { params: { year: state.params.year } })).teams; } catch { state.teams = []; }
 }
 
+function setupAuth() {
+  const box = $("#auth-box");
+  if (!state.meta.auth_required) { box.innerHTML = ""; return; }
+  if (isAdmin()) {
+    box.innerHTML = `<button class="btn ghost" id="logout-btn">🔓 Abmelden</button>`;
+    $("#logout-btn").addEventListener("click", async () => { await api("/api/logout", { method: "POST", body: {} }); location.hash = ""; location.reload(); });
+  } else {
+    box.innerHTML = `<button class="btn ghost" id="login-btn">🔒 Admin-Login</button>`;
+    $("#login-btn").addEventListener("click", async () => {
+      const dlg = document.createElement("dialog");
+      dlg.className = "login-dialog";
+      dlg.innerHTML = `<form method="dialog"><h2>Admin-Login</h2><input type="password" id="login-pw" placeholder="Passwort" autocomplete="current-password" required><div class="login-err" id="login-err"></div><div class="login-actions"><button class="btn" value="cancel" formnovalidate>Abbrechen</button><button class="btn primary" id="login-ok" value="ok">Anmelden</button></div></form>`;
+      document.body.appendChild(dlg);
+      dlg.showModal();
+      $("#login-ok", dlg).addEventListener("click", async (ev) => {
+        ev.preventDefault();
+        try {
+          await api("/api/login", { method: "POST", body: { password: $("#login-pw", dlg).value } });
+          location.reload();
+        } catch (err) { $("#login-err", dlg).textContent = err.message; }
+      });
+      dlg.addEventListener("close", () => dlg.remove());
+    });
+  }
+}
+
 async function boot() {
   initTheme();
   loadParams();
@@ -795,6 +826,7 @@ async function boot() {
   }
   const m = state.meta;
   $("#db-label").textContent = m.db_path;
+  setupAuth();
   if (!m.years.map(String).includes(String(state.params.year))) state.params.year = String(m.years[0]);
   if (!state.params.team) state.params.team = m.default_team || "";
   if (!m.events.some((e) => String(e.id) === String(state.params.event_id))) {
@@ -803,12 +835,12 @@ async function boot() {
   await loadTeams();
   buildNav();
   const hash = decodeURIComponent(location.hash.slice(1));
-  navigate(REPORTS[hash] || ["__import", "__export", "__config"].includes(hash) ? hash : "standings");
+  navigate(REPORTS[hash] || (ADMIN_VIEWS.includes(hash) && isAdmin()) ? hash : "standings");
 }
 
 window.addEventListener("hashchange", () => {
   const hash = decodeURIComponent(location.hash.slice(1));
-  if (hash && hash !== state.view && state.meta && (REPORTS[hash] || hash.startsWith("__"))) navigate(hash);
+  if (hash && hash !== state.view && state.meta && (REPORTS[hash] || ADMIN_VIEWS.includes(hash))) navigate(hash);
 });
 
 boot();
