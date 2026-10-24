@@ -8,6 +8,7 @@ TEAM_NAME_ALIASES = {
     # Example from current data
     "Sphinxi": "Sphinxi und Indiana Jones",
     "Sphinxi & Indiana Jones": "Sphinxi und Indiana Jones",
+    "Sphinx & Indiana jones": "Sphinxi und Indiana Jones",
 
     # Lavezzi variants seen in imported event data
     "Lavezzi‘s verschwörung": "Lavezzi's Verschwörung",
