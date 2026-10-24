@@ -1,5 +1,7 @@
 """Round names configuration for PubQuiz reporting."""
 
+PUZZLE_NAME = "Puzzle"
+
 ROUND_NAMES = {
     1: "Allgemeinwissen",
     2: "Geographie",
@@ -12,3 +14,6 @@ ROUND_NAMES = {
     9: "Überraschung",
     10: "Musik",
 }
+
+CATEGORY_NAMES = (PUZZLE_NAME, *ROUND_NAMES.values())
+CATEGORY_ORDER = {name: index for index, name in enumerate(CATEGORY_NAMES)}

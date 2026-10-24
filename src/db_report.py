@@ -7,7 +7,7 @@ from xml.sax.saxutils import escape
 from typing import Dict, List, Optional
 
 from championship_config import CHAMPIONSHIP_POINTS_BY_POSITION
-from round_config import ROUND_NAMES
+from round_config import CATEGORY_NAMES, CATEGORY_ORDER, PUZZLE_NAME, ROUND_NAMES
 from team_aliases import TEAM_NAME_ALIASES
 
 DB_PATH_DEFAULT = os.path.join("data", "quiz_results.db")
@@ -458,7 +458,7 @@ def get_event_team_result(
             (resolved_event_id,),
         ).fetchall()
 
-    round_order = {name: idx for idx, name in ROUND_NAMES.items()}
+    round_order = CATEGORY_ORDER
     selected_bonus_round = (selected_team_row.get("bonus_round") or "").strip()
 
     rounds = []
@@ -540,6 +540,18 @@ def get_event_team_result(
         puzzle_average = sum(puzzle_scores) / puzzle_total_teams
     if selected_puzzle_points is not None and puzzle_scores:
         puzzle_position = _category_position(puzzle_scores, float(selected_puzzle_points))
+    rounds.insert(
+        0,
+        {
+            "round_name": PUZZLE_NAME,
+            "raw_points": None if selected_puzzle_points is None else float(selected_puzzle_points),
+            "points": None if selected_puzzle_points is None else float(selected_puzzle_points),
+            "is_bonus_round": False,
+            "category_position": puzzle_position,
+            "category_total_teams": puzzle_total_teams,
+            "category_average_points": puzzle_average,
+        },
+    )
 
     championship_points = CHAMPIONSHIP_POINTS_BY_POSITION.get(selected_position or 0, 0)
 
@@ -623,10 +635,19 @@ def print_event_team_result(
     print("""--------------------  -------  -------  ---------  -------  -----""")
     for row in rounds:
         bonus_tag = "yes" if row["is_bonus_round"] else ""
-        pos_text = f"{row['category_position']}/{row['category_total_teams']}"
+        pos_text = (
+            f"{row['category_position']}/{row['category_total_teams']}"
+            if row["category_position"] is not None
+            else "-"
+        )
+        points_text = "-" if row["points"] is None else f"{row['points']:.1f}"
+        raw_points_text = "-" if row["raw_points"] is None else f"{row['raw_points']:.1f}"
+        average_text = (
+            "-" if row["category_average_points"] is None else f"{row['category_average_points']:.1f}"
+        )
         print(
-            f"{row['round_name'][:20]:20}  {row['points']:>7.1f}  {row['raw_points']:>7.1f}  "
-            f"{pos_text:>9}  {row['category_average_points']:>7.1f}  {bonus_tag:>5}"
+            f"{row['round_name'][:20]:20}  {points_text:>7}  {raw_points_text:>7}  "
+            f"{pos_text:>9}  {average_text:>7}  {bonus_tag:>5}"
         )
 
     print("""--------------------  -------  -------  ---------  -------  -----""")
@@ -657,7 +678,6 @@ def get_team_season_results(team_name: str, year: int, db_path: str = DB_PATH_DE
             """,
             (year_prefix,),
         ).fetchall()
-
         # Collect all rows that canonicalize to the requested team.
         # If aliases appear twice in one event, keep the better rank/score row.
         results_by_event: Dict[int, Dict] = {}
@@ -992,6 +1012,18 @@ def get_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_DE
             }
             for row in round_data
         ]
+        round_averages.insert(
+            0,
+            {
+                "round_name": PUZZLE_NAME,
+                "avg_points": puzzle_avg["avg_puzzle"],
+                "appearances": sum(
+                    1
+                    for row in all_team_ids
+                    if _canonical_team_name(row["team_name"]) == canonical_team
+                ),
+            },
+        )
         
         return {
             "team_name": canonical_team,
@@ -1061,9 +1093,14 @@ def get_team_radar_report(
     canonical_team = _canonical_team_name(team_name)
     ranking_report = get_round_strength_ranking(year=year, min_events=min_events, db_path=db_path)
     ranking_map = {block["round_name"]: block["teams"] for block in ranking_report["rankings"]}
+    ranking_map[PUZZLE_NAME] = _get_puzzle_leaderboard(
+        year=year,
+        min_events=min_events,
+        db_path=db_path,
+    )
 
     rounds = []
-    for round_name in ROUND_NAMES.values():
+    for round_name in CATEGORY_NAMES:
         teams = ranking_map.get(round_name, [])
         selected_position = None
         selected_team = None
@@ -1864,7 +1901,7 @@ def get_bonus_details_report(
             normalized_points,
         )
 
-    round_order = {name: idx for idx, name in ROUND_NAMES.items()}
+    round_order = CATEGORY_ORDER
     round_rows = []
     for row in sorted(per_round.values(), key=lambda item: round_order.get(item["round_name"], 999)):
         events_count = int(row["events"])
@@ -2136,7 +2173,7 @@ def get_round_difficulty_report(year: int, db_path: str = DB_PATH_DEFAULT) -> Di
     Bonus-round points are normalized back to normal scoring before aggregation.
     """
     year_prefix = f"{year:04d}-%"
-    round_order = {name: idx for idx, name in ROUND_NAMES.items()}
+    round_order = CATEGORY_ORDER
 
     with _connect(db_path) as conn:
         events_count_row = conn.execute(
@@ -2180,12 +2217,23 @@ def get_round_difficulty_report(year: int, db_path: str = DB_PATH_DEFAULT) -> Di
             """,
             (year_prefix,),
         ).fetchall()
+        puzzle_rows = conn.execute(
+            """
+            SELECT qt.puzzle_points
+            FROM quiz_teams qt
+            JOIN quiz_events e ON e.id = qt.event_id
+            WHERE e.event_date LIKE ?
+              AND qt.puzzle_points IS NOT NULL
+            """,
+            (year_prefix,),
+        ).fetchall()
 
     grouped: Dict[str, List[float]] = {}
     for row in rows:
         round_name = row["round_name"]
         adjusted_points = float(row["adjusted_points"])
         grouped.setdefault(round_name, []).append(adjusted_points)
+    grouped[PUZZLE_NAME] = [float(row["puzzle_points"]) for row in puzzle_rows]
 
     rounds = []
     for round_name, values in grouped.items():
@@ -2208,7 +2256,7 @@ def get_round_difficulty_report(year: int, db_path: str = DB_PATH_DEFAULT) -> Di
             }
         )
 
-    rounds.sort(key=lambda r: (r["avg_points"], round_order.get(r["round_name"], 999)))
+    rounds.sort(key=lambda r: round_order.get(r["round_name"], 999))
 
     return {
         "year": year,
@@ -2340,11 +2388,35 @@ def get_event_difficulty_report(
             """,
                         (year_prefix, resolved_event_id),
         ).fetchall()
+        event_puzzle_row = conn.execute(
+            """
+            SELECT AVG(puzzle_points) AS avg_points, COUNT(*) AS samples
+            FROM quiz_teams
+            WHERE event_id = ?
+              AND puzzle_points IS NOT NULL
+            """,
+            (resolved_event_id,),
+        ).fetchone()
+        other_puzzle_row = conn.execute(
+            """
+            SELECT AVG(qt.puzzle_points) AS avg_points, COUNT(*) AS samples
+            FROM quiz_teams qt
+            JOIN quiz_events e ON e.id = qt.event_id
+            WHERE e.event_date LIKE ?
+              AND qt.event_id != ?
+              AND qt.puzzle_points IS NOT NULL
+            """,
+            (year_prefix, resolved_event_id),
+        ).fetchone()
 
     event_map = {row["round_name"]: {"avg_points": row["avg_points"], "samples": row["samples"]} for row in event_rows}
     other_map = {row["round_name"]: {"avg_points": row["avg_points"], "samples": row["samples"]} for row in other_rows}
+    if event_puzzle_row["avg_points"] is not None:
+        event_map[PUZZLE_NAME] = dict(event_puzzle_row)
+    if other_puzzle_row["avg_points"] is not None:
+        other_map[PUZZLE_NAME] = dict(other_puzzle_row)
 
-    round_order = {name: idx for idx, name in ROUND_NAMES.items()}
+    round_order = CATEGORY_ORDER
     round_names = sorted(
         set(event_map.keys()) | set(other_map.keys()),
         key=lambda name: round_order.get(name, 999),
@@ -2546,10 +2618,10 @@ def get_round_strength_ranking(
 ) -> Dict:
     """Return league-wide team strength ranking per round for a given year."""
     year_prefix = f"{year:04d}-%"
-    allowed_rounds = set(ROUND_NAMES.values())
+    allowed_rounds = set(CATEGORY_NAMES)
     if round_name is not None and round_name not in allowed_rounds:
         raise ValueError(
-            f"Unknown round '{round_name}'. Allowed values: {', '.join(ROUND_NAMES.values())}"
+            f"Unknown round '{round_name}'. Allowed values: {', '.join(CATEGORY_NAMES)}"
         )
 
     with _connect(db_path) as conn:
@@ -2586,7 +2658,7 @@ def get_round_strength_ranking(
         team = _canonical_team_name(row["team_name"])
         round_team_scores.setdefault(row_round, {}).setdefault(team, []).append(float(row["adjusted_points"]))
 
-    round_order = {name: idx for idx, name in ROUND_NAMES.items()}
+    round_order = CATEGORY_ORDER
     rankings = []
     for row_round in sorted(round_team_scores.keys(), key=lambda r: round_order.get(r, 999)):
         team_rows = []
@@ -2607,6 +2679,27 @@ def get_round_strength_ranking(
 
         team_rows.sort(key=lambda t: (-t["avg_points"], -t["events"], t["team_name"].lower()))
         rankings.append({"round_name": row_round, "teams": team_rows})
+
+    if round_name in (None, PUZZLE_NAME):
+        puzzle_teams = _get_puzzle_leaderboard(
+            year=year,
+            min_events=min_events,
+            db_path=db_path,
+        )
+        rankings.append(
+            {
+                "round_name": PUZZLE_NAME,
+                "teams": [
+                    {
+                        **team,
+                        "best": team["avg_points"],
+                        "worst": team["avg_points"],
+                    }
+                    for team in puzzle_teams
+                ],
+            }
+        )
+        rankings.sort(key=lambda block: CATEGORY_ORDER.get(block["round_name"], 999))
 
     return {
         "year": year,
