@@ -369,7 +369,20 @@ const RENDERERS = {
       chart(`Radar – ${d.team_name}`, "radar", { labels, datasets: [
         { label: "Punkteschnitt (normiert)", data: rounds.map((r) => r.avg_score), borderColor: PALETTE[0], backgroundColor: PALETTE[0] + "33", pointBackgroundColor: PALETTE[0] },
         { label: "Platzierung (normiert)", data: rounds.map((r) => r.placement_score), borderColor: PALETTE[1], backgroundColor: PALETTE[1] + "33", pointBackgroundColor: PALETTE[1] },
-      ] }, {}, { height: 480 }),
+      ] }, {
+        scales: { r: { ticks: { display: false } } },
+        plugins: {
+          tooltip: {
+            callbacks: {
+              label: (c) => {
+                const r = rounds[c.dataIndex];
+                if (c.datasetIndex === 0) return `Ø Punkte: ${r.avg_points == null ? "–" : num(r.avg_points, 2)}`;
+                return `Platz: ${r.position == null ? "–" : `${r.position} / ${r.total_teams}`}`;
+              },
+            },
+          },
+        },
+      }, { height: 480 }),
       table("Rundenstärke", [colText("round_name", "Runde"), colNum("avg_points", "Ø Punkte", 2), colNum("position", "Platz", 0), colNum("total_teams", "von", 0), colNum("avg_score", "Ø normiert", 2), colNum("placement_score", "Platz normiert", 2), colNum("events", "Events", 0)], rounds),
     ];
   },
