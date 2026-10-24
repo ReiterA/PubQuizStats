@@ -161,6 +161,17 @@ function baseOptions(type, custom = {}) {
   return deepMerge(opts, custom);
 }
 
+// Tooltip-Zusatzzeilen (Thema, Puzzle-Kategorie/Lösung) je Datensatz-Index
+const themeLines = (e, keys) => (i) => {
+  const k = keys[i];
+  if (!k) return [];
+  const out = [];
+  if (k.topic && e[k.topic]) out.push(`Thema: ${e[k.topic]}`);
+  if (k.category && e[k.category]) out.push(`Kategorie: ${e[k.category]}`);
+  if (k.solution && e[k.solution]) out.push(`Lösung: ${e[k.solution]}`);
+  return out;
+};
+
 function deepMerge(a, b) {
   for (const [k, v] of Object.entries(b)) {
     a[k] = v && typeof v === "object" && !Array.isArray(v) && a[k] && typeof a[k] === "object" ? deepMerge(a[k], v) : v;
@@ -418,7 +429,7 @@ const RENDERERS = {
     const ev = d.events;
     return [
       kpis([{ label: "Events", value: d.events_count }]),
-      chart("Durchschnittspunkte der Themenrunden", "line", { labels: ev.map(labelOf), datasets: [lineSet("Puzzle", ev.map((e) => e.puzzle_average_points), 0), lineSet("Bilderrunde", ev.map((e) => e.image_average_points), 1), lineSet("Überraschung", ev.map((e) => e.surprise_average_points), 2)] }, { scales: { y: { beginAtZero: true } } }, { height: 380 }),
+      chart("Durchschnittspunkte der Themenrunden", "line", { labels: ev.map(labelOf), datasets: [lineSet("Puzzle", ev.map((e) => e.puzzle_average_points), 0), lineSet("Bilderrunde", ev.map((e) => e.image_average_points), 1), lineSet("Überraschung", ev.map((e) => e.surprise_average_points), 2)] }, { scales: { y: { beginAtZero: true } }, plugins: { tooltip: { callbacks: { afterLabel: (c) => themeLines(ev[c.dataIndex], [{ category: "puzzle_category", solution: "puzzle_solution" }, { topic: "image_round_topic" }, { topic: "surprise_round_topic" }])(c.datasetIndex) } } } }, { height: 380 }),
       table("Themen", [colText("event_date", "Datum"), colText("location", "Ort"), colText("puzzle_category", "Puzzle-Kategorie"), colText("puzzle_solution", "Puzzle-Lösung"), colNum("puzzle_average_points", "Puzzle Ø", 1), colText("image_round_topic", "Bilderrunde"), colNum("image_average_points", "Bilder Ø", 1), colText("surprise_round_topic", "Überraschung"), colNum("surprise_average_points", "Überr. Ø", 1)], ev),
     ];
   },
@@ -464,7 +475,7 @@ const RENDERERS = {
   "team-category-detail"(d) {
     const ev = d.events;
     return [
-      chart("Punkte der Themenrunden", "line", { labels: ev.map(labelOf), datasets: [lineSet("Puzzle", ev.map((e) => e.puzzle_points), 0), lineSet("Bilderrunde", ev.map((e) => e.image_round_points), 1), lineSet("Überraschung (ohne Bonus)", ev.map((e) => e.surprise_round_points_no_bonus), 2)] }, {}, { height: 360 }),
+      chart("Punkte der Themenrunden", "line", { labels: ev.map(labelOf), datasets: [lineSet("Puzzle", ev.map((e) => e.puzzle_points), 0), lineSet("Bilderrunde", ev.map((e) => e.image_round_points), 1), lineSet("Überraschung (ohne Bonus)", ev.map((e) => e.surprise_round_points_no_bonus), 2)] }, { plugins: { tooltip: { callbacks: { afterLabel: (c) => themeLines(ev[c.dataIndex], [{ category: "puzzle_category", solution: "puzzle_solution" }, { topic: "image_round_category" }, { topic: "surprise_round_category" }])(c.datasetIndex) } } } }, { height: 360 }),
       table("Kategorien je Event", [colText("event_date", "Datum"), colText("location", "Ort"), colText("puzzle_category", "Puzzle-Kategorie"), colText("puzzle_solution", "Puzzle-Lösung"), colNum("puzzle_points", "Puzzle", 1), colText("image_round_category", "Bilderrunde"), colNum("image_round_points", "Bild", 1), colText("surprise_round_category", "Überraschung"), colNum("surprise_round_points_no_bonus", "Überr.", 1)], ev),
     ];
   },
