@@ -312,9 +312,9 @@ const RENDERERS = {
         { label: "Teams", value: d.teams_count },
         { label: "Spitzenreiter", value: rows[0]?.team_name ?? "–", sub: rows[0] ? `${rows[0].points} Punkte · ${rows[0].wins} Siege` : "" },
       ]),
+      table("Gesamtwertung", [colNum("rank", "Rang", 0), colText("team_name", "Team"), colNum("points", "Punkte", 0), colNum("events_count", "Events", 0), colNum("wins", "Siege", 0), colNum("avg", "Ø Punkte/Event")], rows),
       chart("Top 15 – Meisterschaftspunkte", "bar", { labels: top.map((r) => r.team_name), datasets: [dataset("Punkte", top.map((r) => r.points), 0, { backgroundColor: barColors(top.map((r) => r.team_name)) })] }, { indexAxis: "y", plugins: { legend: { display: false } } }, { height: Math.max(340, top.length * 30), half: true }),
       chart("Siege der Top 15", "bar", { labels: top.map((r) => r.team_name), datasets: [dataset("Siege", top.map((r) => r.wins), 2)] }, { indexAxis: "y", plugins: { legend: { display: false } } }, { height: Math.max(340, top.length * 30), half: true }),
-      table("Gesamtwertung", [colNum("rank", "Rang", 0), colText("team_name", "Team"), colNum("points", "Punkte", 0), colNum("events_count", "Events", 0), colNum("wins", "Siege", 0), colNum("avg", "Ø Punkte/Event")], rows),
     ];
   },
 
