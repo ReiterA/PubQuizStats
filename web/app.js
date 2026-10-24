@@ -73,27 +73,27 @@ async function download(path, params, button) {
  * ------------------------------------------------------------------ */
 // needs: which filter controls are relevant for the report
 const REPORTS = {
-  standings: { group: "Meisterschaft", ico: "🏆", label: "Tabelle", desc: "Aktueller Meisterschaftsstand aller Teams", needs: ["year"] },
-  "standing-progress": { group: "Meisterschaft", ico: "📈", label: "Tabellenverlauf", desc: "Entwicklung der Meisterschaftspunkte von Event zu Event", needs: ["year", "top"], exports: [{ label: "📄 PDF-Diagramm", kind: "standing-progress-pdf" }] },
-  leaders: { group: "Meisterschaft", ico: "👑", label: "Kategorien", desc: "Die besten Teams je Kategorie sowie bei Punkten, Schnitt und Bonus", needs: ["year", "min_events"] },
-  consistency: { group: "Meisterschaft", ico: "🎯", label: "Konstanz", desc: "Wie konstant die Teams über die Events hinweg spielen", needs: ["year", "min_events"] },
+  standings: { group: "Meisterschaft", label: "Tabelle", desc: "Aktueller Meisterschaftsstand aller Teams", needs: ["year"] },
+  "standing-progress": { group: "Meisterschaft", label: "Tabellenverlauf", desc: "Entwicklung der Meisterschaftspunkte von Event zu Event", needs: ["year", "top"], exports: [{ label: "PDF-Diagramm", kind: "standing-progress-pdf" }] },
+  leaders: { group: "Meisterschaft", label: "Kategorien", desc: "Die besten Teams je Kategorie sowie bei Punkten, Schnitt und Bonus", needs: ["year", "min_events"] },
+  consistency: { group: "Meisterschaft", label: "Konstanz", desc: "Wie konstant die Teams über die Events hinweg spielen", needs: ["year", "min_events"] },
 
-  list: { group: "Events", ico: "📅", label: "Eventliste", desc: "Alle importierten Quiz-Events im Überblick", needs: [] },
-  result: { group: "Events", ico: "🧾", label: "Event-Ergebnis", desc: "Komplette Rangliste eines einzelnen Events", needs: ["event"] },
-  "Event Result Team": { group: "Events", ico: "🔎", label: "Team-Ergebnis", desc: "Ergebnis des gewählten Teams in einem Event, nach Kategorien", needs: ["event", "team"] },
-  "event-difficulty": { group: "Events", ico: "⚖️", label: "Schwierigkeit", desc: "Wie schwer war das Event im Vergleich zu allen anderen, je Kategorie?", needs: ["event"] },
+  list: { group: "Events", label: "Eventliste", desc: "Alle importierten Quiz-Events im Überblick", needs: [] },
+  result: { group: "Events", label: "Event-Ergebnis", desc: "Komplette Rangliste eines einzelnen Events", needs: ["event"] },
+  "Event Result Team": { group: "Events", label: "Team-Ergebnis", desc: "Ergebnis des gewählten Teams in einem Event, nach Kategorien", needs: ["event", "team"] },
+  "event-difficulty": { group: "Events", label: "Schwierigkeit", desc: "Wie schwer war das Event im Vergleich zu allen anderen, je Kategorie?", needs: ["event"] },
 
-  team: { group: "Team", ico: "👥", label: "Überblick", desc: "Saisonverlauf und alle Events des gewählten Teams", needs: ["year", "team"], teamExports: true },
-  averages: { group: "Team", ico: "📊", label: "Stärken/Schwächen", desc: "In welchen Kategorien das Team über oder unter dem Feld liegt", needs: ["year", "team"], teamExports: true },
-  radar: { group: "Team", ico: "🕸️", label: "Radar-Plots", desc: "Punkte und Platzierung des Teams je Kategorie als Radar-Plots", needs: ["year", "team", "min_events"], teamExports: true, exports: [{ label: "🖼️ Radar SVG", kind: "radar-svg" }] },
-  "bonus-efficiency": { group: "Team", ico: "🎁", label: "Bonus-Effizienz", desc: "Wie gut wurde die Bonusrunde genutzt?", needs: ["year", "team"], teamExports: true },
-  "Bonus Details": { group: "Team", ico: "✨", label: "Bonus-Details", desc: "Welche Bonuspunkte in welcher Kategorie möglich gewesen wären", needs: ["year", "team"], teamExports: true },
-  "team-category-detail": { group: "Team", ico: "🗂️", label: "Themenrunden-Details", desc: "Puzzle-, Bild- und Überraschungsrunde des Teams pro Event", needs: ["year", "team"], teamExports: true, exports: [{ label: "📄 Kategorie-PDF", kind: "team-category-pdf" }] },
+  team: { group: "Team", label: "Überblick", desc: "Saisonverlauf und alle Events des gewählten Teams", needs: ["year", "team"], teamExports: true },
+  averages: { group: "Team", label: "Stärken/Schwächen", desc: "In welchen Kategorien das Team über oder unter dem Feld liegt", needs: ["year", "team"], teamExports: true },
+  radar: { group: "Team", label: "Radar-Plots", desc: "Punkte und Platzierung des Teams je Kategorie als Radar-Plots", needs: ["year", "team", "min_events"], teamExports: true, exports: [{ label: "Radar SVG", kind: "radar-svg" }] },
+  "bonus-efficiency": { group: "Team", label: "Bonus-Effizienz", desc: "Wie gut wurde die Bonusrunde genutzt?", needs: ["year", "team"], teamExports: true },
+  "Bonus Details": { group: "Team", label: "Bonus-Details", desc: "Welche Bonuspunkte in welcher Kategorie möglich gewesen wären", needs: ["year", "team"], teamExports: true },
+  "team-category-detail": { group: "Team", label: "Themenrunden-Details", desc: "Puzzle-, Bild- und Überraschungsrunde des Teams pro Event", needs: ["year", "team"], teamExports: true, exports: [{ label: "Kategorie-PDF", kind: "team-category-pdf" }] },
 
-  difficulty: { group: "Kategorien", ico: "🔥", label: "Kategorieschwierigkeit", desc: "Durchschnittspunkte je Kategorie über alle Teams", needs: ["year"] },
-  "round-strength": { group: "Kategorien", ico: "💪", label: "Kategorierangliste", desc: "Rangliste der besten Teams je Kategorie", needs: ["year", "round", "min_events", "top", "team"] },
-  "puzzle-categories": { group: "Kategorien", ico: "🧠", label: "Puzzle", desc: "Punkteschnitt aller Teams je Puzzle-Kategorie", needs: ["year"] },
-  "Theme Difficulties": { group: "Kategorien", ico: "🧩", label: "Themenrunden", desc: "Puzzle-, Bilder- und Überraschungsrunden der Events im Vergleich", needs: ["year"], exports: [{ label: "📄 Themen-PDF", kind: "theme-pdf" }] },
+  difficulty: { group: "Kategorien", label: "Kategorieschwierigkeit", desc: "Durchschnittspunkte je Kategorie über alle Teams", needs: ["year"] },
+  "round-strength": { group: "Kategorien", label: "Kategorierangliste", desc: "Rangliste der besten Teams je Kategorie", needs: ["year", "round", "min_events", "top", "team"] },
+  "puzzle-categories": { group: "Kategorien", label: "Puzzle", desc: "Punkteschnitt aller Teams je Puzzle-Kategorie", needs: ["year"] },
+  "Theme Difficulties": { group: "Kategorien", label: "Themenrunden", desc: "Puzzle-, Bilder- und Überraschungsrunden der Events im Vergleich", needs: ["year"], exports: [{ label: "Themen-PDF", kind: "theme-pdf" }] },
 };
 const GROUPS = ["Meisterschaft", "Events", "Team", "Kategorien"];
 
@@ -500,13 +500,13 @@ function buildNav() {
   GROUPS.forEach((g) => {
     html += `<div class="nav-group">${g}</div>`;
     Object.entries(REPORTS).filter(([, r]) => r.group === g).forEach(([key, r]) => {
-      html += `<button class="nav-item" data-view="${esc(key)}"><span class="ico">${r.ico}</span>${esc(r.label)}</button>`;
+      html += `<button class="nav-item" data-view="${esc(key)}">${esc(r.label)}</button>`;
     });
   });
   if (isAdmin()) html += `<div class="nav-group">Verwaltung</div>
-    <button class="nav-item" data-view="__import"><span class="ico">📥</span>Import</button>
-    <button class="nav-item" data-view="__export"><span class="ico">🗃️</span>Team-Reports</button>
-    <button class="nav-item" data-view="__config"><span class="ico">⚙️</span>Einstellungen</button>`;
+    <button class="nav-item" data-view="__import">Import</button>
+    <button class="nav-item" data-view="__export">Team-Reports</button>
+    <button class="nav-item" data-view="__config">Einstellungen</button>`;
   nav.innerHTML = html;
   nav.querySelectorAll(".nav-item").forEach((b) => b.addEventListener("click", () => { navigate(b.dataset.view); $("#sidebar").classList.remove("open"); }));
 }
@@ -601,9 +601,9 @@ function renderActions(def) {
   if (!isAdmin()) { box.innerHTML = ""; return; }
   let html = "";
   const teamNeeded = def.needs.includes("team") && !def.needs.includes("round");
-  if (def.teamExports) html += `<button class="btn" data-export="team-pdf">📄 Team-Report (PDF)</button>`;
+  if (def.teamExports) html += `<button class="btn" data-export="team-pdf">Team-Report (PDF)</button>`;
   (def.exports || []).forEach((e) => { html += `<button class="btn" data-export="${e.kind}">${e.label}</button>`; });
-  html += `<button class="btn" data-export="text-pdf" title="Textausgabe als PDF">📝 Text-PDF</button>`;
+  html += `<button class="btn" data-export="text-pdf" title="Textausgabe als PDF">Text-PDF</button>`;
   box.innerHTML = html;
   box.querySelectorAll("[data-export]").forEach((b) => b.addEventListener("click", () => {
     const p = state.params;
@@ -623,8 +623,8 @@ async function loadReport() {
   const needsTeam = def.needs.includes("team") && !def.needs.includes("round");
   const needsEvent = def.needs.includes("event");
   destroyCharts();
-  if (needsTeam && !state.params.team) return emptyState("👥", "Bitte ein Team wählen.");
-  if (needsEvent && !state.params.event_id) return emptyState("📅", "Bitte ein Event wählen.");
+  if (needsTeam && !state.params.team) return emptyState("", "Bitte ein Team wählen.");
+  if (needsEvent && !state.params.event_id) return emptyState("", "Bitte ein Event wählen.");
   $("#content").innerHTML = `<div class="loading"><div class="spinner"></div>Lade Daten …</div>`;
   try {
     const res = await api("/api/report", { params: reportParams() });
@@ -633,14 +633,14 @@ async function loadReport() {
     renderReport();
   } catch (err) {
     if (token !== state.token) return;
-    emptyState("⚠️", err.message);
+    emptyState("", err.message);
     toast(err.message, "err");
   }
 }
 
 function emptyState(icon, message) {
   state.data = null;
-  $("#content").innerHTML = `<div class="empty"><div style="font-size:40px">${icon}</div><p>${esc(message)}</p></div>`;
+  $("#content").innerHTML = `<div class="empty"><p>${esc(message)}</p></div>`;
 }
 
 function renderReport() {
@@ -683,7 +683,7 @@ function logLine(box, text, cls = "") {
 }
 
 function describeImport(box, r) {
-  logLine(box, `✔ ${r.teams_imported} Teams importiert – ${r.event_date} @ ${r.location}`, "ok");
+  logLine(box, `${r.teams_imported} Teams importiert – ${r.event_date} @ ${r.location}`, "ok");
   if (r.is_new_event && r.first_time_teams?.length) logLine(box, `Neue Teams: ${r.first_time_teams.join(", ")}`);
 }
 
@@ -698,12 +698,12 @@ function renderImport() {
   $("#content").innerHTML = `
     <div class="card half">
       <h2>Quiz-Datei importieren</h2>
-      <div class="dropzone" id="dz-file"><p>📄 Excel-Datei hierher ziehen<br><span class="muted">Dateiname: <code>YYYYMMDD_Ort.xlsx</code></span></p>
+      <div class="dropzone" id="dz-file"><p>Excel-Datei hierher ziehen<br><span class="muted">Dateiname: <code>YYYYMMDD_Ort.xlsx</code></span></p>
         <input type="file" id="file-in" accept=".xlsx,.xlsm,.xltx,.xltm" multiple></div>
     </div>
     <div class="card half">
       <h2>Event-Themen importieren</h2>
-      <div class="dropzone" id="dz-themes"><p>🧩 Themen-Excel hierher ziehen<br><span class="muted">Spalten: Datum, Puzzle Kategorie, Puzzle Lösung, Bilderrunde, Überraschungsrunde</span></p>
+      <div class="dropzone" id="dz-themes"><p>Themen-Excel hierher ziehen<br><span class="muted">Spalten: Datum, Puzzle Kategorie, Puzzle Lösung, Bilderrunde, Überraschungsrunde</span></p>
         <input type="file" id="theme-in" accept=".xlsx,.xlsm,.xltx,.xltm"></div>
     </div>
     <div class="card">
@@ -722,13 +722,13 @@ function renderImport() {
       onOk(r);
       await refreshMeta();
     } catch (err) {
-      logLine(log, `✖ ${file.name}: ${err.message}`, "err");
+      logLine(log, `${file.name}: ${err.message}`, "err");
       toast(err.message, "err");
     }
   };
   const importQuiz = (file) => upload(file, "/api/import/file", (r) => describeImport(log, r));
   const importThemes = (file) => upload(file, "/api/import/themes", (r) => {
-    logLine(log, `✔ Themen: ${r.rows_imported}/${r.rows_found} Zeilen importiert`, r.rows_failed ? "err" : "ok");
+    logLine(log, `Themen: ${r.rows_imported}/${r.rows_found} Zeilen importiert`, r.rows_failed ? "err" : "ok");
     (r.errors || []).forEach((e) => logLine(log, `Zeile ${e.row}: ${e.message}`, "err"));
   });
 
@@ -748,11 +748,11 @@ function renderImport() {
     try {
       const s = await api("/api/import/folder", { method: "POST", body: { path: $("#folder").value.trim() } });
       s.imports.forEach((r) => describeImport(log, r));
-      (s.errors || []).forEach((er) => logLine(log, `✖ ${er.file}: ${er.message}`, "err"));
+      (s.errors || []).forEach((er) => logLine(log, `${er.file}: ${er.message}`, "err"));
       logLine(log, `Fertig: ${s.files_imported} Dateien importiert, ${s.files_failed || 0} fehlgeschlagen.`, s.files_failed ? "err" : "ok");
       await refreshMeta();
     } catch (err) {
-      logLine(log, `✖ ${err.message}`, "err");
+      logLine(log, `${err.message}`, "err");
       toast(err.message, "err");
     } finally {
       e.target.disabled = false;
@@ -769,7 +769,7 @@ function renderBatch() {
   $("#content").innerHTML = `
     <div class="card">
       <h2>Alle Team-Reports erzeugen</h2>
-      <p class="muted">${m.converter ? `DOCX→PDF-Konverter gefunden: <code>${esc(m.converter)}</code>` : "⚠️ Kein LibreOffice (<code>soffice</code>) gefunden – ohne Konverter können keine Team-PDFs erzeugt werden."}</p>
+      <p class="muted">${m.converter ? `DOCX→PDF-Konverter gefunden: <code>${esc(m.converter)}</code>` : "Kein LibreOffice (<code>soffice</code>) gefunden – ohne Konverter können keine Team-PDFs erzeugt werden."}</p>
       <div class="row">
         <div class="field"><label for="b-year">Jahr</label><select id="b-year">${m.years.map((y) => `<option ${String(y) === String(state.params.year) ? "selected" : ""}>${y}</option>`).join("")}</select></div>
         <div class="field"><label for="b-min">Min. Events</label><input id="b-min" type="number" min="1" value="${esc(state.params.min_events)}"></div>
@@ -797,7 +797,7 @@ async function pollJob(id, button) {
     const percent = j.total ? Math.round((j.done / j.total) * 100) : 0;
     box.innerHTML = `<div class="progress"><div style="width:${percent}%"></div></div>
       <p>${j.status === "running" ? `Erzeuge ${esc(j.current || "")} (${j.done}/${j.total}) …` : `Fertig: <span class="pill ok">${j.successes} erfolgreich</span> <span class="pill ${j.failures ? "err" : ""}">${j.failures} Fehler</span>`}</p>
-      ${j.status !== "running" ? `<p class="muted">Gespeichert in <code>${esc(j.folder)}</code></p>${j.has_zip ? `<button class="btn" id="zip-btn">⬇️ ZIP herunterladen</button>` : ""}` : ""}
+      ${j.status !== "running" ? `<p class="muted">Gespeichert in <code>${esc(j.folder)}</code></p>${j.has_zip ? `<button class="btn" id="zip-btn">⬇ZIP herunterladen</button>` : ""}` : ""}
       <div class="log">${j.log.map((l) => `<div class="${l.includes("FAIL") ? "err" : ""}">${esc(l)}</div>`).join("")}</div>`;
     if (j.status === "running") return setTimeout(() => pollJob(id, button), 1000);
     button.disabled = false;
@@ -850,10 +850,10 @@ function setupAuth() {
   const box = $("#auth-box");
   if (!state.meta.auth_required) { box.innerHTML = ""; return; }
   if (isAdmin()) {
-    box.innerHTML = `<button class="btn ghost" id="logout-btn">🔓 Abmelden</button>`;
+    box.innerHTML = `<button class="btn ghost" id="logout-btn">Abmelden</button>`;
     $("#logout-btn").addEventListener("click", async () => { await api("/api/logout", { method: "POST", body: {} }); location.hash = ""; location.reload(); });
   } else {
-    box.innerHTML = `<button class="btn ghost" id="login-btn">🔒 Admin-Login</button>`;
+    box.innerHTML = `<button class="btn ghost" id="login-btn">Admin-Login</button>`;
     $("#login-btn").addEventListener("click", async () => {
       const dlg = document.createElement("dialog");
       dlg.className = "login-dialog";
@@ -879,7 +879,7 @@ async function boot() {
   try {
     state.meta = await api("/api/meta");
   } catch (err) {
-    $("#content").innerHTML = `<div class="empty">⚠️ ${esc(err.message)}</div>`;
+    $("#content").innerHTML = `<div class="empty">${esc(err.message)}</div>`;
     return;
   }
   const m = state.meta;
