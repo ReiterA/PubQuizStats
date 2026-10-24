@@ -501,15 +501,41 @@ function navigate(view) {
 
 function renderView() {
   const view = state.view;
+  $("#global-filters").hidden = true;
   if (view === "__import") return renderImport();
   if (view === "__export") return renderBatch();
   if (view === "__config") return renderConfig();
   const def = REPORTS[view] || REPORTS.standings;
   $("#page-title").textContent = def.label;
   $("#page-desc").textContent = def.desc;
+  renderGlobalFilters(def);
   renderFilters(def);
   renderActions(def);
   loadReport();
+}
+
+function renderGlobalFilters(def) {
+  const box = $("#global-filters");
+  const p = state.params;
+  const m = state.meta;
+  const teamNames = [...new Set(state.teams || [])].sort((a, b) => a.localeCompare(b, "de"));
+  if (p.team && !teamNames.includes(p.team)) teamNames.unshift(p.team);
+  box.hidden = false;
+  box.innerHTML =
+    field("f-year", "Jahr", `<select id="f-year">${m.years.map((y) => `<option ${String(y) === String(p.year) ? "selected" : ""}>${y}</option>`).join("")}</select>`) +
+    field("f-team", "Team", `<select id="f-team"><option value="">Kein Team</option>${teamNames.map((team) => `<option value="${esc(team)}" ${team === p.team ? "selected" : ""}>${esc(team)}</option>`).join("")}</select>`);
+  $("#f-year").addEventListener("change", async (e) => {
+    p.year = e.target.value;
+    saveParams();
+    await loadTeams();
+    renderGlobalFilters(def);
+    loadReport();
+  });
+  $("#f-team").addEventListener("change", (e) => {
+    p.team = e.target.value;
+    saveParams();
+    loadReport();
+  });
 }
 
 function field(id, label, control) {
@@ -521,18 +547,7 @@ function renderFilters(def) {
   const m = state.meta;
   const needs = new Set(def.needs);
   let html = "";
-  if (needs.has("year")) html += field("f-year", "Jahr", `<select id="f-year">${m.years.map((y) => `<option ${String(y) === String(p.year) ? "selected" : ""}>${y}</option>`).join("")}</select>`);
   if (needs.has("event")) html += field("f-event", "Event", `<select id="f-event" class="wide">${m.events.slice().sort((a, b) => b.event_date.localeCompare(a.event_date)).map((e) => `<option value="${e.id}" ${String(e.id) === String(p.event_id) ? "selected" : ""}>${esc(e.event_date)} · ${esc(e.location)} · ${esc(e.winner || "–")}</option>`).join("")}</select>`);
-  if (needs.has("team")) {
-    const teamNames = [...new Set(state.teams || [])].sort((a, b) => a.localeCompare(b, "de"));
-    if (p.team && !teamNames.includes(p.team)) teamNames.unshift(p.team);
-    const placeholder = def.needs.includes("round") ? "Alle Teams" : "Team wählen …";
-    html += field(
-      "f-team",
-      def.needs.includes("round") ? "Team hervorheben" : "Team",
-      `<select id="f-team" class="wide"><option value="">${placeholder}</option>${teamNames.map((team) => `<option value="${esc(team)}" ${team === p.team ? "selected" : ""}>${esc(team)}</option>`).join("")}</select>`,
-    );
-  }
   if (needs.has("round")) html += field("f-round", "Runde", `<select id="f-round"><option value="">Alle Runden</option>${m.rounds.map((r) => `<option ${r === p.round_name ? "selected" : ""}>${esc(r)}</option>`).join("")}</select>`);
   if (needs.has("min_events")) html += field("f-min", "Min. Events", `<input id="f-min" type="number" min="1" max="100" value="${esc(p.min_events)}">`);
   if (needs.has("top")) html += field("f-top", "Top", `<input id="f-top" type="number" min="1" max="100" value="${esc(p.top)}">`);
@@ -551,9 +566,7 @@ function renderFilters(def) {
       if (reload) loadReport();
     });
   };
-  bind("#f-year", "year");
   bind("#f-event", "event_id");
-  bind("#f-team", "team");
   bind("#f-round", "round_name");
   bind("#f-min", "min_events");
   bind("#f-top", "top");

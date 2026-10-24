@@ -65,6 +65,9 @@ h1, h2, h3 { margin: 0; }
 }
 .brand-name { font-weight: 700; font-size: 16px; }
 .brand-sub { font-size: 11px; color: var(--muted); max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-filters { display: flex; flex-direction: column; gap: 10px; padding: 0 8px 12px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.sidebar-filters[hidden] { display: none; }
+.sidebar-filters select { width: 100%; }
 .nav-group { margin: 14px 0 4px; padding: 0 10px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .nav-item {
   display: flex; align-items: center; gap: 10px; width: 100%;
