@@ -84,6 +84,7 @@ REPORT_TYPES = [
     "Bonus Details",
     "consistency",
     "Theme Difficulties",
+    "puzzle-categories",
     "difficulty",
     "event-difficulty",
     "round-strength",
@@ -238,6 +239,11 @@ def run_report(report: str, p: Params) -> dict:
         return {
             "data": db_report.get_theme_difficulty_report(year, db),
             "text": _capture(db_report.print_theme_difficulty_report, year, db),
+        }
+    if report == "puzzle-categories":
+        return {
+            "data": db_report.get_puzzle_category_report(year, db),
+            "text": _capture(db_report.print_puzzle_category_report, year, db),
         }
     if report == "difficulty":
         return {

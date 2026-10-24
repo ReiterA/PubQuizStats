@@ -92,6 +92,7 @@ const REPORTS = {
 
   difficulty: { group: "Kategorien", ico: "🔥", label: "Kategorieschwierigkeit", desc: "Durchschnittspunkte je Kategorie über alle Teams", needs: ["year"] },
   "round-strength": { group: "Kategorien", ico: "💪", label: "Kategorierangliste", desc: "Rangliste der besten Teams je Kategorie", needs: ["year", "round", "min_events", "top", "team"] },
+  "puzzle-categories": { group: "Kategorien", ico: "🧠", label: "Puzzle", desc: "Punkteschnitt aller Teams je Puzzle-Kategorie", needs: ["year"] },
   "Theme Difficulties": { group: "Kategorien", ico: "🧩", label: "Themenrunden", desc: "Puzzle-, Bilder- und Überraschungsrunden der Events im Vergleich", needs: ["year"], exports: [{ label: "📄 Themen-PDF", kind: "theme-pdf" }] },
 };
 const GROUPS = ["Meisterschaft", "Events", "Team", "Kategorien"];
@@ -470,6 +471,15 @@ const RENDERERS = {
       blocks.push(table(`${rk.round_name} (${teams.length} Teams)`, [colNum("pos", "Platz", 0), colText("team_name", "Team"), colNum("avg_points", "Ø Punkte", 2), colNum("events", "Events", 0), colNum("best", "Best", 1), colNum("worst", "Worst", 1)], shown));
     });
     return blocks;
+  },
+
+  "puzzle-categories"(d) {
+    const c = d.categories;
+    return [
+      kpis([{ label: "Puzzle-Kategorien", value: c.length }]),
+      chart("Ø Punkte je Puzzle-Kategorie", "bar", { labels: c.map((x) => x.category), datasets: [dataset("Ø Punkte", c.map((x) => x.avg_points), 0)] }, { plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: (t) => [`${c[t.dataIndex].events} Event(s)`, ...c[t.dataIndex].solutions.map((x) => `Lösung: ${x}`)] } } }, scales: { y: { beginAtZero: true, max: 10 } } }, { height: 380 }),
+      table("Puzzle-Kategorien", [colText("category", "Kategorie"), colNum("events", "Events", 0), colNum("avg_points", "Ø Punkte", 2), colNum("min_points", "Min Ø", 2), colNum("max_points", "Max Ø", 2)], c),
+    ];
   },
 
   "team-category-detail"(d) {

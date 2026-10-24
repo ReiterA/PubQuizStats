@@ -2629,6 +2629,58 @@ def print_theme_difficulty_report(
         )
 
 
+def get_puzzle_category_report(
+    year: Optional[int] = None,
+    db_path: str = DB_PATH_DEFAULT,
+) -> Dict:
+    """Return the average puzzle points per puzzle category (over all teams and events)."""
+    events = get_theme_difficulty_report(year=year, db_path=db_path)["events"]
+
+    grouped: Dict[str, Dict] = {}
+    for event in events:
+        category = (event["puzzle_category"] or "").strip()
+        average = event["puzzle_average_points"]
+        if not category or average is None:
+            continue
+        entry = grouped.setdefault(category.casefold(), {"category": category, "values": [], "solutions": []})
+        entry["values"].append(float(average))
+        if event["puzzle_solution"]:
+            entry["solutions"].append(f"{event['puzzle_solution']} ({event['event_date']})")
+
+    categories = [
+        {
+            "category": entry["category"],
+            "events": len(entry["values"]),
+            "avg_points": sum(entry["values"]) / len(entry["values"]),
+            "min_points": min(entry["values"]),
+            "max_points": max(entry["values"]),
+            "solutions": entry["solutions"],
+        }
+        for entry in grouped.values()
+    ]
+    categories.sort(key=lambda c: (-c["avg_points"], c["category"]))
+
+    return {"year": year, "categories": categories}
+
+
+def print_puzzle_category_report(
+    year: Optional[int] = None,
+    db_path: str = DB_PATH_DEFAULT,
+) -> None:
+    """Print the average puzzle points per puzzle category."""
+    result = get_puzzle_category_report(year=year, db_path=db_path)
+    year_text = f" ({year})" if year is not None else ""
+    print(f"Puzzle category report{year_text}")
+    print()
+    if not result["categories"]:
+        print("No puzzle category data found.")
+        return
+    print(f"{'Category':24}  {'Events':>6}  {'Avg':>6}  {'Min':>6}  {'Max':>6}")
+    print("------------------------  ------  ------  ------  ------")
+    for c in result["categories"]:
+        print(f"{c['category'][:24]:24}  {c['events']:>6}  {c['avg_points']:>6.2f}  {c['min_points']:>6.2f}  {c['max_points']:>6.2f}")
+
+
 def get_round_strength_ranking(
     year: int,
     round_name: Optional[str] = None,
