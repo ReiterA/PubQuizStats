@@ -1110,6 +1110,23 @@ def get_team_radar_report(
                 selected_team = team
                 break
 
+        field_avg_points = None
+        field_avg_score = 0.0
+        field_avg_position = None
+        field_placement_score = 0.0
+        if teams:
+            field_avg_points = sum(float(t["avg_points"]) for t in teams) / len(teams)
+            best_avg = float(teams[0]["avg_points"])
+            field_avg_score = (field_avg_points / best_avg) if best_avg else 0.0
+            field_avg_position = (len(teams) + 1) / 2
+            field_placement_score = 1.0 if len(teams) == 1 else 0.5
+        field_values = {
+            "field_avg_points": field_avg_points,
+            "field_avg_score": field_avg_score,
+            "field_avg_position": field_avg_position,
+            "field_placement_score": field_placement_score,
+        }
+
         if selected_team is not None:
             total_teams = len(teams)
             max_avg_points = teams[0]["avg_points"] if teams else 0
@@ -1125,6 +1142,7 @@ def get_team_radar_report(
                     "avg_score": avg_score,
                     "placement_score": placement_score,
                     "events": selected_team["events"],
+                    **field_values,
                 }
             )
             continue
@@ -1138,6 +1156,7 @@ def get_team_radar_report(
                 "avg_score": 0.0,
                 "placement_score": 0.0,
                 "events": 0,
+                **field_values,
             }
         )
 

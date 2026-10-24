@@ -365,24 +365,20 @@ const RENDERERS = {
   radar(d) {
     const rounds = d.rounds;
     const labels = rounds.map((r) => r.round_name);
+    const radarSet = (label, data, i) => ({ label, data, borderColor: PALETTE[i], backgroundColor: PALETTE[i] + "33", pointBackgroundColor: PALETTE[i] });
+    const radarOptions = (valueText) => ({
+      scales: { r: { ticks: { display: false } } },
+      plugins: { tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${valueText(rounds[c.dataIndex], c.datasetIndex)}` } } },
+    });
+    const val = (v, d = 2) => (v == null ? "–" : num(v, d));
     return [
-      chart(`Radar – ${d.team_name}`, "radar", { labels, datasets: [
-        { label: "Punkteschnitt (normiert)", data: rounds.map((r) => r.avg_score), borderColor: PALETTE[0], backgroundColor: PALETTE[0] + "33", pointBackgroundColor: PALETTE[0] },
-        { label: "Platzierung (normiert)", data: rounds.map((r) => r.placement_score), borderColor: PALETTE[1], backgroundColor: PALETTE[1] + "33", pointBackgroundColor: PALETTE[1] },
-      ] }, {
-        scales: { r: { ticks: { display: false } } },
-        plugins: {
-          tooltip: {
-            callbacks: {
-              label: (c) => {
-                const r = rounds[c.dataIndex];
-                if (c.datasetIndex === 0) return `Ø Punkte: ${r.avg_points == null ? "–" : num(r.avg_points, 2)}`;
-                return `Platz: ${r.position == null ? "–" : `${r.position} / ${r.total_teams}`}`;
-              },
-            },
-          },
-        },
-      }, { height: 480 }),
+      chart("Radar – Punkteschnitt", "radar", { labels, datasets: [
+        radarSet(d.team_name, rounds.map((r) => r.avg_score), 1),
+        radarSet("Ø aller Teams", rounds.map((r) => r.field_avg_score), 0),
+      ] }, radarOptions((r, i) => (i === 0 ? `Ø ${val(r.avg_points)} Punkte` : `Ø ${val(r.field_avg_points)} Punkte`)), { height: 480, half: true }),
+      chart("Radar – Platzierung", "radar", { labels, datasets: [
+        radarSet(d.team_name, rounds.map((r) => r.placement_score), 1),
+      ] }, radarOptions((r) => (r.position == null ? "–" : `Platz ${r.position} / ${r.total_teams}`)), { height: 480, half: true }),
       table("Rundenstärke", [colText("round_name", "Runde"), colNum("avg_points", "Ø Punkte", 2), colNum("position", "Platz", 0), colNum("total_teams", "von", 0), colNum("avg_score", "Ø normiert", 2), colNum("placement_score", "Platz normiert", 2), colNum("events", "Events", 0)], rounds),
     ];
   },
