@@ -73,28 +73,28 @@ async function download(path, params, button) {
  * ------------------------------------------------------------------ */
 // needs: which filter controls are relevant for the report
 const REPORTS = {
-  standings: { group: "Meisterschaft", ico: "🏆", label: "Tabelle", desc: "Gesamtwertung der Meisterschaft", needs: ["year"] },
-  "standing-progress": { group: "Meisterschaft", ico: "📈", label: "Tabellenverlauf", desc: "Kumulierte Meisterschaftspunkte pro Event", needs: ["year", "top"], exports: [{ label: "📄 PDF-Diagramm", kind: "standing-progress-pdf" }] },
-  leaders: { group: "Meisterschaft", ico: "👑", label: "Leader", desc: "Führende in Punkten, Schnitt, Bonus und Kategorien", needs: ["year", "min_events"] },
-  consistency: { group: "Meisterschaft", ico: "🎯", label: "Konstanz", desc: "Wie gleichmäßig spielen die Teams?", needs: ["year", "min_events"] },
+  standings: { group: "Meisterschaft", ico: "🏆", label: "Tabelle", desc: "Aktueller Meisterschaftsstand aller Teams", needs: ["year"] },
+  "standing-progress": { group: "Meisterschaft", ico: "📈", label: "Tabellenverlauf", desc: "Entwicklung der Meisterschaftspunkte von Event zu Event", needs: ["year", "top"], exports: [{ label: "📄 PDF-Diagramm", kind: "standing-progress-pdf" }] },
+  leaders: { group: "Meisterschaft", ico: "👑", label: "Kategorien", desc: "Die besten Teams je Kategorie sowie bei Punkten, Schnitt und Bonus", needs: ["year", "min_events"] },
+  consistency: { group: "Meisterschaft", ico: "🎯", label: "Konstanz", desc: "Wie konstant die Teams über die Events hinweg spielen", needs: ["year", "min_events"] },
 
-  list: { group: "Events", ico: "📅", label: "Eventliste", desc: "Alle importierten Quiz-Events", needs: [] },
-  result: { group: "Events", ico: "🧾", label: "Event-Ergebnis", desc: "Gesamtergebnis eines Events", needs: ["event"] },
-  "Event Result Team": { group: "Events", ico: "🔎", label: "Event-Ergebnis Team", desc: "Detailergebnis eines Teams in einem Event", needs: ["event", "team"] },
-  "event-difficulty": { group: "Events", ico: "⚖️", label: "Event-Schwierigkeit", desc: "Rundenschnitt des Events vs. alle anderen Events", needs: ["event"] },
-  "Theme Difficulties": { group: "Events", ico: "🧩", label: "Themen-Schwierigkeit", desc: "Puzzle-, Bilder- und Überraschungsrunden pro Event", needs: ["year"], exports: [{ label: "📄 Themen-PDF", kind: "theme-pdf" }] },
+  list: { group: "Events", ico: "📅", label: "Eventliste", desc: "Alle importierten Quiz-Events im Überblick", needs: [] },
+  result: { group: "Events", ico: "🧾", label: "Event-Ergebnis", desc: "Komplette Rangliste eines einzelnen Events", needs: ["event"] },
+  "Event Result Team": { group: "Events", ico: "🔎", label: "Team-Ergebnis", desc: "Ergebnis des gewählten Teams in einem Event, nach Kategorien", needs: ["event", "team"] },
+  "event-difficulty": { group: "Events", ico: "⚖️", label: "Schwierigkeit", desc: "Wie schwer war das Event im Vergleich zu allen anderen, je Kategorie?", needs: ["event"] },
 
-  team: { group: "Team", ico: "👥", label: "Team-Saison", desc: "Alle Events eines Teams in der Saison", needs: ["year", "team"], teamExports: true },
-  averages: { group: "Team", ico: "📊", label: "Rundenschnitte", desc: "Rundenschnitt des Teams im Vergleich zum Feld", needs: ["year", "team"], teamExports: true },
-  radar: { group: "Team", ico: "🕸️", label: "Radar", desc: "Stärken & Schwächen pro Runde", needs: ["year", "team", "min_events"], teamExports: true, exports: [{ label: "🖼️ Radar SVG", kind: "radar-svg" }] },
+  team: { group: "Team", ico: "👥", label: "Überblick", desc: "Saisonverlauf und alle Events des gewählten Teams", needs: ["year", "team"], teamExports: true },
+  averages: { group: "Team", ico: "📊", label: "Stärken/Schwächen", desc: "In welchen Kategorien das Team über oder unter dem Feld liegt", needs: ["year", "team"], teamExports: true },
+  radar: { group: "Team", ico: "🕸️", label: "Radar-Plots", desc: "Punkte und Platzierung des Teams je Kategorie als Radar-Plots", needs: ["year", "team", "min_events"], teamExports: true, exports: [{ label: "🖼️ Radar SVG", kind: "radar-svg" }] },
   "bonus-efficiency": { group: "Team", ico: "🎁", label: "Bonus-Effizienz", desc: "Wie gut wurde die Bonusrunde genutzt?", needs: ["year", "team"], teamExports: true },
-  "Bonus Details": { group: "Team", ico: "✨", label: "Bonus-Details", desc: "Hypothetische Bonuspunkte je Runde", needs: ["year", "team"], teamExports: true },
-  "team-category-detail": { group: "Team", ico: "🗂️", label: "Kategorie-Details", desc: "Puzzle-, Bild- und Überraschungsrunde pro Event", needs: ["year", "team"], teamExports: true, exports: [{ label: "📄 Kategorie-PDF", kind: "team-category-pdf" }] },
+  "Bonus Details": { group: "Team", ico: "✨", label: "Bonus-Details", desc: "Welche Bonuspunkte in welcher Kategorie möglich gewesen wären", needs: ["year", "team"], teamExports: true },
+  "team-category-detail": { group: "Team", ico: "🗂️", label: "Themenrunden-Details", desc: "Puzzle-, Bild- und Überraschungsrunde des Teams pro Event", needs: ["year", "team"], teamExports: true, exports: [{ label: "📄 Kategorie-PDF", kind: "team-category-pdf" }] },
 
-  difficulty: { group: "Runden", ico: "🔥", label: "Rundenschwierigkeit", desc: "Durchschnittspunkte je Runde über alle Teams", needs: ["year"] },
-  "round-strength": { group: "Runden", ico: "💪", label: "Rundenstärke", desc: "Beste Teams je Runde", needs: ["year", "round", "min_events", "top", "team"] },
+  difficulty: { group: "Kategorien", ico: "🔥", label: "Kategorieschwierigkeit", desc: "Durchschnittspunkte je Kategorie über alle Teams", needs: ["year"] },
+  "round-strength": { group: "Kategorien", ico: "💪", label: "Kategorierangliste", desc: "Rangliste der besten Teams je Kategorie", needs: ["year", "round", "min_events", "top", "team"] },
+  "Theme Difficulties": { group: "Kategorien", ico: "🧩", label: "Themenrunden", desc: "Puzzle-, Bilder- und Überraschungsrunden der Events im Vergleich", needs: ["year"], exports: [{ label: "📄 Themen-PDF", kind: "theme-pdf" }] },
 };
-const GROUPS = ["Meisterschaft", "Events", "Team", "Runden"];
+const GROUPS = ["Meisterschaft", "Events", "Team", "Kategorien"];
 
 /* ------------------------------------------------------------------ *
  *  State
@@ -379,7 +379,7 @@ const RENDERERS = {
       chart("Radar – Platzierung", "radar", { labels, datasets: [
         radarSet(d.team_name, rounds.map((r) => r.placement_score), 1),
       ] }, radarOptions((r) => (r.position == null ? "–" : `Platz ${r.position} / ${r.total_teams}`)), { height: 480, half: true }),
-      table("Rundenstärke", [colText("round_name", "Runde"), colNum("avg_points", "Ø Punkte", 2), colNum("position", "Platz", 0), colNum("total_teams", "von", 0), colNum("avg_score", "Ø normiert", 2), colNum("placement_score", "Platz normiert", 2), colNum("events", "Events", 0)], rounds),
+      table("Kategorierangliste", [colText("round_name", "Runde"), colNum("avg_points", "Ø Punkte", 2), colNum("position", "Platz", 0), colNum("total_teams", "von", 0), colNum("avg_score", "Ø normiert", 2), colNum("placement_score", "Platz normiert", 2), colNum("events", "Events", 0)], rounds),
     ];
   },
 
@@ -428,7 +428,7 @@ const RENDERERS = {
     return [
       kpis([{ label: "Events", value: d.events_count }, { label: "Schwerste Runde", value: r[0]?.round_name ?? "–", sub: r[0] ? `Ø ${num(r[0].avg_points, 2)}` : "" }, { label: "Leichteste Runde", value: r.at(-1)?.round_name ?? "–", sub: r.length ? `Ø ${num(r.at(-1).avg_points, 2)}` : "" }]),
       chart("Ø Punkte je Runde (niedriger = schwerer)", "bar", { labels: r.map((x) => x.round_name), datasets: [dataset("Ø Punkte", r.map((x) => x.avg_points), 0)] }, { plugins: { legend: { display: false } } }),
-      table("Rundenschwierigkeit", [colText("round_name", "Runde"), colNum("samples", "Stichproben", 0), colNum("avg_points", "Ø Punkte", 2), colNum("stddev", "σ", 2), colNum("min_points", "Min", 1), colNum("max_points", "Max", 1)], d.rounds, { sort: { key: "avg_points" } }),
+      table("Kategorieschwierigkeit", [colText("round_name", "Runde"), colNum("samples", "Stichproben", 0), colNum("avg_points", "Ø Punkte", 2), colNum("stddev", "σ", 2), colNum("min_points", "Min", 1), colNum("max_points", "Max", 1)], d.rounds, { sort: { key: "avg_points" } }),
     ];
   },
 
