@@ -347,10 +347,16 @@ const RENDERERS = {
   averages(d) {
     const rounds = d.team.round_averages;
     const overall = d.overall.round_averages;
-    const rows = rounds.map((r) => ({ ...r, overall: overall[r.round_name] ?? null, diff: overall[r.round_name] != null ? r.avg_points - overall[r.round_name] : null }));
-    rows.push({ round_name: "Puzzle", avg_points: d.team.puzzle_average, overall: d.overall.puzzle_average, diff: d.team.puzzle_average - d.overall.puzzle_average, appearances: null });
+    const rows = rounds.map((r) => {
+      const overallAverage = r.round_name === "Puzzle" ? d.overall.puzzle_average : (overall[r.round_name] ?? null);
+      return {
+        ...r,
+        overall: overallAverage,
+        diff: r.avg_points != null && overallAverage != null ? r.avg_points - overallAverage : null,
+      };
+    });
     return [
-      chart("Rundenschnitt: Team vs. Feld", "bar", { labels: rounds.map((r) => r.round_name), datasets: [dataset(d.team.team_name, rounds.map((r) => r.avg_points), 0), dataset("Ø aller Teams", rounds.map((r) => overall[r.round_name] ?? null), 1)] }),
+      chart("Rundenschnitt: Team vs. Feld", "bar", { labels: rounds.map((r) => r.round_name), datasets: [dataset(d.team.team_name, rounds.map((r) => r.avg_points), 0), dataset("Ø aller Teams", rows.map((r) => r.overall), 1)] }),
       chart("Differenz zum Feld", "bar", { labels: rows.map((r) => r.round_name), datasets: [{ label: "Differenz", data: rows.map((r) => r.diff), backgroundColor: rows.map((r) => (r.diff >= 0 ? "#10b981cc" : "#ef4444cc")), borderRadius: 6 }] }, { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: false } } }, { height: 280 }),
       table("Rundenschnitte", [colText("round_name", "Runde"), colNum("avg_points", "Team Ø", 2), colNum("overall", "Feld Ø", 2), col("diff", "Differenz", (v) => (v == null ? "–" : `<span class="pill ${v >= 0 ? "ok" : "err"}">${v >= 0 ? "+" : ""}${num(v, 2)}</span>`), "num"), colNum("appearances", "Events", 0)], rows),
     ];
@@ -508,7 +514,16 @@ function renderFilters(def) {
   let html = "";
   if (needs.has("year")) html += field("f-year", "Jahr", `<select id="f-year">${m.years.map((y) => `<option ${String(y) === String(p.year) ? "selected" : ""}>${y}</option>`).join("")}</select>`);
   if (needs.has("event")) html += field("f-event", "Event", `<select id="f-event" class="wide">${m.events.slice().sort((a, b) => b.event_date.localeCompare(a.event_date)).map((e) => `<option value="${e.id}" ${String(e.id) === String(p.event_id) ? "selected" : ""}>${esc(e.event_date)} · ${esc(e.location)} · ${esc(e.winner || "–")}</option>`).join("")}</select>`);
-  if (needs.has("team")) html += field("f-team", def.needs.includes("round") ? "Team hervorheben" : "Team", `<input id="f-team" class="wide" list="team-list" placeholder="Team wählen …" value="${esc(p.team)}"><datalist id="team-list">${(state.teams || []).map((t) => `<option value="${esc(t)}">`).join("")}</datalist>`);
+  if (needs.has("team")) {
+    const teamNames = [...new Set(state.teams || [])].sort((a, b) => a.localeCompare(b, "de"));
+    if (p.team && !teamNames.includes(p.team)) teamNames.unshift(p.team);
+    const placeholder = def.needs.includes("round") ? "Alle Teams" : "Team wählen …";
+    html += field(
+      "f-team",
+      def.needs.includes("round") ? "Team hervorheben" : "Team",
+      `<select id="f-team" class="wide"><option value="">${placeholder}</option>${teamNames.map((team) => `<option value="${esc(team)}" ${team === p.team ? "selected" : ""}>${esc(team)}</option>`).join("")}</select>`,
+    );
+  }
   if (needs.has("round")) html += field("f-round", "Runde", `<select id="f-round"><option value="">Alle Runden</option>${m.rounds.map((r) => `<option ${r === p.round_name ? "selected" : ""}>${esc(r)}</option>`).join("")}</select>`);
   if (needs.has("min_events")) html += field("f-min", "Min. Events", `<input id="f-min" type="number" min="1" max="100" value="${esc(p.min_events)}">`);
   if (needs.has("top")) html += field("f-top", "Top", `<input id="f-top" type="number" min="1" max="100" value="${esc(p.top)}">`);

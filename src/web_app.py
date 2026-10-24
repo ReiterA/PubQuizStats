@@ -31,7 +31,7 @@ if str(SRC_DIR) not in sys.path:
 import db_report  # noqa: E402
 import import_quiz_results  # noqa: E402
 import report_export  # noqa: E402
-from round_config import ROUND_NAMES  # noqa: E402
+from round_config import CATEGORY_NAMES  # noqa: E402
 
 WEB_DIR = PROJECT_ROOT / "web"
 CONFIG_FILE = PROJECT_ROOT / "data" / "config.json"
@@ -645,7 +645,7 @@ class Handler(BaseHTTPRequestHandler):
             "default_team": settings.get("default_team", ""),
             "events": events,
             "years": years or [time.localtime().tm_year],
-            "rounds": list(ROUND_NAMES.values()),
+            "rounds": list(CATEGORY_NAMES),
             "converter": report_export.detect_office_converter() if admin else None,
         }
 
