@@ -21,6 +21,10 @@ PUZZLE_CATEGORIES = {"Stadt", "Land", "Region", "Person", "Song", "Film"}
 
 EVENT_FILE_PATTERN = re.compile(r"(?P<date>\d{8})_(?P<location>.+)\.(xlsx|xlsm|xltx|xltm)$")
 
+LOCATION_ALIASES = {
+    "JosefGG": "Josef Gastgarten",
+}
+
 
 def parse_event_from_filename(filename):
     basename = os.path.basename(filename)
@@ -33,6 +37,7 @@ def parse_event_from_filename(filename):
 
     event_date = datetime.strptime(match.group("date"), "%Y%m%d").date().isoformat()
     location = match.group("location").replace("_", " ")
+    location = LOCATION_ALIASES.get(location, location)
     return event_date, location
 
 
