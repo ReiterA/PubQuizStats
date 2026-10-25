@@ -350,8 +350,8 @@ const RENDERERS = {
         { label: "Ø Punkte", value: num(avg, 2) },
         { label: "Ø Prozent", value: `${num(ev.reduce((s, e) => s + e.percentage, 0) / (ev.length || 1))} %` },
       ]),
-      chart("Platzierung je Event (niedriger = besser)", "line", { labels: ev.map(labelOf), datasets: [lineSet("Platz", ev.map((e) => e.position), 0, { fill: true })] }, { scales: { y: { reverse: true, beginAtZero: false } }, plugins: { legend: { display: false } } }, { half: true }),
-      chart("Punkte je Event", "bar", { labels: ev.map(labelOf), datasets: [dataset("Punkte", ev.map((e) => e.total_points), 2)] }, { plugins: { legend: { display: false } } }, { half: true }),
+      chart("Platzierung je Event (niedriger = besser)", "line", { labels: ev.map(labelOf), datasets: [lineSet("Platz", ev.map((e) => e.position), 0, { fill: true })] }, { scales: { y: { reverse: true, beginAtZero: false, min: 1, max: Math.max(30, ...ev.map((e) => e.position || 0)) } }, plugins: { legend: { display: false } } }, { half: true }),
+      chart("Punkte je Event", "bar", { labels: ev.map(labelOf), datasets: [dataset("Punkte", ev.map((e) => e.total_points), 2)] }, { scales: { y: { beginAtZero: false, min: Math.min(30, Math.floor(Math.min(...ev.map((e) => e.total_points).filter((v) => v != null)) / 10) * 10), max: 71, ticks: { stepSize: 10, includeBounds: false } } }, plugins: { legend: { display: false } } }, { half: true }),
       table("Events", [colText("event_date", "Datum"), colText("location", "Ort"), colNum("position", "Platz", 0), colNum("total_points", "Punkte", 0), col("percentage", "Punkte (% des Siegerteams)", (v) => `${num(v)} %`), colText("bonus_round", "Bonusrunde")], ev, { onRow: (r) => openEvent(r.event_id, "Event Result Team") }),
     ];
   },
