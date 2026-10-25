@@ -529,6 +529,17 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError("Not found.", HTTPStatus.NOT_FOUND)
         except ApiError as exc:
             self._json({"error": str(exc)}, exc.status)
+        except db_report.TeamNotInEventError as exc:
+            self._json(
+                {
+                    "error": f"{exc.team_name} hat an diesem Event nicht teilgenommen.",
+                    "code": "team_not_in_event",
+                    "team": exc.team_name,
+                    "event_date": exc.event_date,
+                    "location": exc.location,
+                },
+                HTTPStatus.NOT_FOUND,
+            )
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception as exc:

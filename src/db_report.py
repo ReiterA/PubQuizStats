@@ -12,6 +12,19 @@ from team_aliases import TEAM_NAME_ALIASES
 
 DB_PATH_DEFAULT = os.path.join("data", "quiz_results.db")
 
+class TeamNotInEventError(ValueError):
+    """Raised when the selected team did not take part in the selected event."""
+
+    def __init__(self, team_name: str, event_id: int, event_date: str, location: str):
+        super().__init__(
+            f"Team '{team_name}' has no result in event #{event_id} ({event_date} @ {location})."
+        )
+        self.team_name = team_name
+        self.event_id = event_id
+        self.event_date = event_date
+        self.location = location
+
+
 TEAM_REPORT_ROUND_MAX_POINTS = {
     "Allgemeinwissen": 5,
     "Geographie": 5,
@@ -441,8 +454,8 @@ def get_event_team_result(
                 selected_position = rank
 
         if selected_team_row is None:
-            raise ValueError(
-                f"Team '{canonical_team}' has no result in event #{resolved_event_id} ({event_row['event_date']} @ {event_row['location']})."
+            raise TeamNotInEventError(
+                canonical_team, resolved_event_id, event_row["event_date"], event_row["location"]
             )
 
         round_rows = conn.execute(

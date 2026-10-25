@@ -39,8 +39,9 @@ async function request(path, { params, method = "GET", body, headers = {}, raw }
   const res = await fetch(url, init);
   if (!res.ok) {
     let message = res.statusText;
-    try { message = (await res.json()).error || message; } catch { /* not json */ }
-    throw new Error(message);
+    let detail = {};
+    try { detail = await res.json(); message = detail.error || message; } catch { /* not json */ }
+    throw Object.assign(new Error(message), { detail });
   }
   return res;
 }
@@ -560,7 +561,8 @@ function renderGlobalFilters(def) {
 }
 
 function field(id, label, control) {
-  return `<div class="field"><label for="${id}">${esc(label)}</label>${control}</div>`;
+  const hint = id === "f-min" ? ` title="Nur Teams mit mindestens so viel Eventteilnahmen werden berücksichtigt."` : "";
+  return `<div class="field"><label for="${id}"${hint}>${esc(label)}</label>${control}</div>`;
 }
 
 function renderFilters(def) {
@@ -570,7 +572,7 @@ function renderFilters(def) {
   let html = "";
   if (needs.has("event")) html += field("f-event", "Event", `<select id="f-event" class="wide">${m.events.slice().sort((a, b) => b.event_date.localeCompare(a.event_date)).map((e) => `<option value="${e.id}" ${String(e.id) === String(p.event_id) ? "selected" : ""}>${esc(e.event_date)} · ${esc(e.location)} · ${esc(e.winner || "–")}</option>`).join("")}</select>`);
   if (needs.has("round")) html += field("f-round", "Runde", `<select id="f-round"><option value="">Alle Runden</option>${m.rounds.map((r) => `<option ${r === p.round_name ? "selected" : ""}>${esc(r)}</option>`).join("")}</select>`);
-  if (needs.has("min_events")) html += field("f-min", "Min. Events", `<input id="f-min" type="number" min="1" max="100" value="${esc(p.min_events)}">`);
+  if (needs.has("min_events")) html += field("f-min", "Min. Eventteilnahmen", `<input id="f-min" type="number" title="Nur Teams mit mindestens so viel Eventteilnahmen werden berücksichtigt." min="1" max="100" value="${esc(p.min_events)}">`);
   if (needs.has("top")) html += field("f-top", "Top", `<input id="f-top" type="number" min="1" max="100" value="${esc(p.top)}">`);
   $("#filters").innerHTML = html;
 
@@ -633,9 +635,20 @@ async function loadReport() {
     renderReport();
   } catch (err) {
     if (token !== state.token) return;
+    if (err.detail?.code === "team_not_in_event") return notParticipatedState(err.detail);
     emptyState("", err.message);
     toast(err.message, "err");
   }
+}
+
+function notParticipatedState({ team, event_date, location }) {
+  state.data = null;
+  $("#content").innerHTML = `<div class="notice">
+    <div class="notice-icon">🚫</div>
+    <h3>Keine Teilnahme</h3>
+    <p><strong>${esc(team)}</strong> hat am Event vom <strong>${esc(event_date)}</strong> (${esc(location)}) nicht teilgenommen.</p>
+    <p class="muted">Bitte ein anderes Event oder Team wählen.</p>
+  </div>`;
 }
 
 function emptyState(icon, message) {
@@ -772,7 +785,7 @@ function renderBatch() {
       <p class="muted">${m.converter ? `DOCX→PDF-Konverter gefunden: <code>${esc(m.converter)}</code>` : "Kein LibreOffice (<code>soffice</code>) gefunden – ohne Konverter können keine Team-PDFs erzeugt werden."}</p>
       <div class="row">
         <div class="field"><label for="b-year">Jahr</label><select id="b-year">${m.years.map((y) => `<option ${String(y) === String(state.params.year) ? "selected" : ""}>${y}</option>`).join("")}</select></div>
-        <div class="field"><label for="b-min">Min. Events</label><input id="b-min" type="number" min="1" value="${esc(state.params.min_events)}"></div>
+        <div class="field"><label for="b-min" title="Nur Teams mit mindestens so viel Eventteilnahmen werden berücksichtigt.">Min. Eventteilnahmen</label><input id="b-min" type="number" title="Nur Teams mit mindestens so viel Eventteilnahmen werden berücksichtigt." min="1" value="${esc(state.params.min_events)}"></div>
         <button class="btn primary" id="b-start">Reports erzeugen</button>
       </div>
       <div id="b-status"></div>
