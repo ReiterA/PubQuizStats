@@ -1,5 +1,6 @@
 import sqlite3
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,79 @@ from import_quiz_results import create_schema
 
 
 class ThemeDifficultyReportTests(unittest.TestCase):
+    def test_round_difficulty_report_includes_all_teams(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "round_difficulty.db"
+            conn = sqlite3.connect(db_path)
+            create_schema(conn)
+
+            conn.execute(
+                "INSERT INTO quiz_events (id, event_date, location, source_file, imported_at) VALUES (?, ?, ?, ?, ?)",
+                (1, "2026-03-12", "Vienna", "20260312_Vienna.xlsx", "2026-03-12T10:00:00Z"),
+            )
+            conn.executemany(
+                "INSERT INTO quiz_teams (id, event_id, team_rank, team_name, puzzle_points, total, bonus_round) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (team_id, 1, team_id, f"Team {team_id}", team_id % 11, 50 - team_id, None)
+                    for team_id in range(1, 32)
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO team_scores (team_id, round_name, points) VALUES (?, ?, ?)",
+                [(team_id, "Geographie", team_id % 6) for team_id in range(1, 32)],
+            )
+            conn.commit()
+            conn.close()
+
+            result = db_report.get_round_difficulty_report(year=2026, db_path=str(db_path))
+
+        rounds = {row["round_name"]: row for row in result["rounds"]}
+        self.assertEqual(rounds["Geographie"]["samples"], 31)
+        self.assertAlmostEqual(rounds["Geographie"]["avg_points"], 76 / 31)
+        self.assertAlmostEqual(rounds["Geographie"]["reachable_percent"], 76 / 31 / 5 * 100)
+        self.assertEqual(rounds["Puzzle"]["samples"], 31)
+        self.assertAlmostEqual(rounds["Puzzle"]["avg_points"], 5.0)
+        self.assertAlmostEqual(rounds["Puzzle"]["reachable_percent"], 50.0)
+
+    def test_event_difficulty_report_includes_all_teams(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "event_difficulty.db"
+            conn = sqlite3.connect(db_path)
+            create_schema(conn)
+            conn.executemany(
+                "INSERT INTO quiz_events (id, event_date, location, source_file, imported_at) VALUES (?, ?, ?, ?, ?)",
+                [
+                    (event_id, f"2026-03-{12 + (event_id - 1) * 7:02d}", f"Location {event_id}", f"event{event_id}.xlsx", "2026-03-12T10:00:00Z")
+                    for event_id in (1, 2)
+                ],
+            )
+
+            teams = [
+                (event_id * 100 + team_id, event_id, team_id, f"Team {event_id}-{team_id}", team_id + (event_id - 1) * 10, 100 - team_id, None)
+                for event_id in (1, 2)
+                for team_id in range(1, 32)
+            ]
+            conn.executemany(
+                "INSERT INTO quiz_teams (id, event_id, team_rank, team_name, puzzle_points, total, bonus_round) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                teams,
+            )
+            conn.executemany(
+                "INSERT INTO team_scores (team_id, round_name, points) VALUES (?, ?, ?)",
+                [(team[0], "Geographie", team[4]) for team in teams],
+            )
+            conn.commit()
+            conn.close()
+
+            result = db_report.get_event_difficulty_report(event_id=1, db_path=str(db_path))
+
+        rounds = {row["round_name"]: row for row in result["rounds"]}
+        self.assertEqual(rounds["Geographie"]["event_samples"], 31)
+        self.assertEqual(rounds["Geographie"]["event_avg"], 16.0)
+        self.assertEqual(rounds["Geographie"]["other_samples"], 31)
+        self.assertEqual(rounds["Geographie"]["other_avg"], 26.0)
+        self.assertEqual(rounds["Puzzle"]["event_samples"], 31)
+        self.assertEqual(rounds["Puzzle"]["other_samples"], 31)
+
     def test_theme_difficulty_html_uses_five_events_per_page(self):
         report = {
             "events": [

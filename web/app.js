@@ -74,7 +74,7 @@ async function download(path, params, button) {
 // needs: which filter controls are relevant for the report
 const REPORTS = {
   standings: { group: "Meisterschaft", label: "Tabelle", desc: "Aktueller Meisterschaftsstand aller Teams", needs: ["year"] },
-  "standing-progress": { group: "Meisterschaft", label: "Tabellenverlauf", desc: "Entwicklung der Meisterschaftspunkte von Event zu Event", needs: ["year", "top"], exports: [{ label: "PDF-Diagramm", kind: "standing-progress-pdf" }] },
+  "standing-progress": { group: "Meisterschaft", label: "Saisonverlauf", desc: "Entwicklung der Meisterschaftspunkte von Event zu Event", needs: ["year", "top"], exports: [{ label: "PDF-Diagramm", kind: "standing-progress-pdf" }] },
   leaders: { group: "Meisterschaft", label: "Kategorien", desc: "Die besten Teams je Kategorie sowie bei Punkten, Schnitt und Bonus", needs: ["year", "min_events"] },
   consistency: { group: "Meisterschaft", label: "Konstanz", desc: "Wie konstant die Teams über die Events hinweg spielen", needs: ["year", "min_events"] },
 
@@ -86,8 +86,8 @@ const REPORTS = {
   team: { group: "Team", label: "Überblick", desc: "Saisonverlauf und alle Events des gewählten Teams", needs: ["year", "team"], teamExports: true },
   averages: { group: "Team", label: "Stärken/Schwächen", desc: "In welchen Kategorien das Team über oder unter dem Feld liegt", needs: ["year", "team"], teamExports: true },
   radar: { group: "Team", label: "Radar-Plots", desc: "Punkte und Platzierung des Teams je Kategorie als Radar-Plots", needs: ["year", "team", "min_events"], teamExports: true, exports: [{ label: "Radar SVG", kind: "radar-svg" }] },
-  "bonus-efficiency": { group: "Team", label: "Bonus-Effizienz", desc: "Wie gut wurde die Bonusrunde genutzt?", needs: ["year", "team"], teamExports: true },
-  "Bonus Details": { group: "Team", label: "Bonus-Details", desc: "Welche Bonuspunkte in welcher Kategorie möglich gewesen wären", needs: ["year", "team"], teamExports: true },
+  "bonus-efficiency": { group: "Team", label: "Bonus-Effizienz", desc: "Wie gut wurde die Bonusrunde genutzt? Die Bonus-Effizienz setzt die Punkte, die mit der gewählten Bonusrunde erzielt wurden, ins Verhältnis zu den Punkten, die maximal möglich gewesen wären. Als Maßstab dient die beste Ausbeute, die das Team in einer der anderen Kategorien erreicht hat, denn dort hätte der Bonus am meisten gebracht. Bei der Kategorie „Interessantes“ ist nicht bekannt, ob das Anagramm richtig gelöst wurde. Deshalb wird dort per Wahrscheinlichkeitsschätzung abgeleitet, ob das Anagramm richtig war, und die möglichen Bonuspunkte werden entsprechend geschätzt. 100 % bedeuten: Die Bonusrunde war die bestmögliche Wahl.", needs: ["year", "team"], teamExports: true },
+  "Bonus Details": { group: "Team", label: "Bonus-Details", desc: "Welche Bonuspunkte in welcher Kategorie möglich gewesen wären. Für jede Kategorie wird berechnet, wie viele Punkte das Team erreicht hätte, wenn es sie als Bonusrunde gewählt hätte. Puzzle- und Bilderrunde sind als Bonusrunde nicht möglich und bleiben unberücksichtigt. Bei der Kategorie „Interessantes“ ist nicht bekannt, ob das Anagramm richtig gelöst wurde. Deshalb wird dort per Wahrscheinlichkeitsschätzung abgeleitet, wie wahrscheinlich das Anagramm richtig war, und daraus ein erwarteter Bonuswert ermittelt.", needs: ["year", "team"], teamExports: true },
   "team-category-detail": { group: "Team", label: "Themenrunden-Details", desc: "Puzzle-, Bild- und Überraschungsrunde des Teams pro Event", needs: ["year", "team"], teamExports: true, exports: [{ label: "Kategorie-PDF", kind: "team-category-pdf" }] },
 
   difficulty: { group: "Kategorien", label: "Kategorieschwierigkeit", desc: "Durchschnittspunkte je Kategorie über alle Teams", needs: ["year"] },
@@ -268,7 +268,7 @@ const RENDERERS = {
     return [
       kpis([{ label: "Events", value: events.length }, { label: "Teams (Ø)", value: num(events.reduce((s, e) => s + e.team_count, 0) / (events.length || 1), 0) }]),
       chart("Teilnehmende Teams je Event", "bar", { labels: events.map(labelOf), datasets: [dataset("Teams", events.map((e) => e.team_count), 0)] }, { plugins: { legend: { display: false } } }),
-      table("Events", [colText("id", "#"), colText("event_date", "Datum"), colText("location", "Ort"), colNum("team_count", "Teams", 0), colText("winner", "Sieger"), colText("winner_bonus", "Bonusrunde")], events, { onRow: (r) => openEvent(r.id, "result"), sort: { key: "event_date", desc: true } }),
+      table("Events", [colText("id", "#"), colText("event_date", "Datum"), colText("location", "Ort"), colNum("team_count", "Teams", 0), colText("winner", "Siegerteam"), colText("winner_bonus", "Bonusrunde des Siegerteams")], events, { onRow: (r) => openEvent(r.id, "result"), sort: { key: "event_date", desc: true } }),
     ];
   },
 
@@ -279,7 +279,7 @@ const RENDERERS = {
       kpis([
         { label: "Event", value: d.event.event_date, sub: d.event.location },
         { label: "Teams", value: teams.length },
-        { label: "Sieger", value: teams[0]?.team_name ?? "–", sub: teams[0] ? `${teams[0].total} Punkte` : "" },
+        { label: "Siegerteam", value: teams[0]?.team_name ?? "–", sub: teams[0] ? `${teams[0].total} Punkte` : "" },
         { label: "Ø Punkte", value: num(teams.reduce((s, t) => s + t.total, 0) / (teams.length || 1)) },
       ]),
       chart("Top 15 – Gesamtpunkte", "bar", { labels: top.map((t) => t.team_name), datasets: [dataset("Gesamt", top.map((t) => t.total), 0, { backgroundColor: barColors(top.map((t) => t.team_name)) }), dataset("davon Puzzle", top.map((t) => t.puzzle_points), 2)] }, { indexAxis: "y" }, { height: Math.max(340, top.length * 30) }),
@@ -299,7 +299,7 @@ const RENDERERS = {
         { label: "Puzzle", value: t.puzzle_points, sub: `Platz ${t.puzzle_position}/${t.puzzle_total_teams} · Ø ${num(t.puzzle_average)}` },
       ]),
       chart("Rundenpunkte vs. Feld", "bar", { labels: rounds.map((r) => r.round_name), datasets: [dataset("Team", rounds.map((r) => r.points), 0), dataset("Ø aller Teams", rounds.map((r) => r.category_average_points), 1)] }),
-      table("Runden", [colText("round_name", "Runde"), colNum("raw_points", "Punkte"), colNum("points", "Rohpunkte"), col("is_bonus_round", "Bonus", (v) => (v ? '<span class="pill">Bonus</span>' : ""), ""), colNum("category_position", "Platz", 0), colNum("category_total_teams", "von", 0), colNum("category_average_points", "Ø Feld", 2)], rounds),
+      table("Runden", [colText("round_name", "Runde"), colNum("raw_points", "Punkte"), colNum("points", "Punkte ohne Bonus"), col("is_bonus_round", "Bonus", (v) => (v ? '<span class="pill">Bonus</span>' : ""), ""), colNum("category_position", "Platz", 0), colNum("category_average_points", "Ø Feld", 2)], rounds),
     ];
   },
 
@@ -312,7 +312,7 @@ const RENDERERS = {
         { label: "Teams", value: d.teams_count },
         { label: "Spitzenreiter", value: rows[0]?.team_name ?? "–", sub: rows[0] ? `${rows[0].points} Punkte · ${rows[0].wins} Siege` : "" },
       ]),
-      table("Gesamtwertung", [colNum("rank", "Rang", 0), colText("team_name", "Team"), colNum("points", "Punkte", 0), colNum("events_count", "Events", 0), colNum("wins", "Siege", 0), colNum("avg", "Ø Punkte/Event")], rows),
+      table("Gesamtwertung", [colNum("rank", "Rang", 0), colText("team_name", "Team"), colNum("points", "Punkte", 0), colNum("events_count", "Events", 0), colNum("wins", "Siege", 0), colNum("avg", "Meisterschaftspunkte pro Event"), colNum("avg_total_points", "Durchschnittspunkte")], rows),
       chart("Top 15 – Meisterschaftspunkte", "bar", { labels: top.map((r) => r.team_name), datasets: [dataset("Punkte", top.map((r) => r.points), 0, { backgroundColor: barColors(top.map((r) => r.team_name)) })] }, { indexAxis: "y", plugins: { legend: { display: false } } }, { height: Math.max(340, top.length * 30), half: true }),
       chart("Siege der Top 15", "bar", { labels: top.map((r) => r.team_name), datasets: [dataset("Siege", top.map((r) => r.wins), 2)] }, { indexAxis: "y", plugins: { legend: { display: false } } }, { height: Math.max(340, top.length * 30), half: true }),
     ];
@@ -320,7 +320,7 @@ const RENDERERS = {
 
   "standing-progress"(d) {
     return [
-      kpis([{ label: "Events", value: d.events.length }, { label: "Teams im Chart", value: d.teams.length }, { label: "Spitzenreiter", value: d.teams[0]?.team_name ?? "–", sub: d.teams[0] ? `${d.teams[0].final_points} Punkte` : "" }]),
+      kpis([{ label: "Events", value: d.events.length }, { label: "Spitzenreiter", value: d.teams[0]?.team_name ?? "–", sub: d.teams[0] ? `${d.teams[0].final_points} Punkte` : "" }]),
       chart("Verlauf der Meisterschaftspunkte", "line", { labels: d.events.map((e) => e.label), datasets: d.teams.map((t, i) => lineSet(t.team_name, t.values, i, { borderWidth: 3, pointRadius: 2 })) }, {}, { height: 480 }),
       table("Aktuelle Top-Teams", [colNum("pos", "Pos", 0), colText("team_name", "Team"), colNum("final_points", "Punkte", 0)], d.teams.map((t, i) => ({ ...t, pos: i + 1 }))),
     ];
@@ -352,7 +352,7 @@ const RENDERERS = {
       ]),
       chart("Platzierung je Event (niedriger = besser)", "line", { labels: ev.map(labelOf), datasets: [lineSet("Platz", ev.map((e) => e.position), 0, { fill: true })] }, { scales: { y: { reverse: true, beginAtZero: false } }, plugins: { legend: { display: false } } }, { half: true }),
       chart("Punkte je Event", "bar", { labels: ev.map(labelOf), datasets: [dataset("Punkte", ev.map((e) => e.total_points), 2)] }, { plugins: { legend: { display: false } } }, { half: true }),
-      table("Events", [colText("event_date", "Datum"), colText("location", "Ort"), colNum("position", "Platz", 0), colNum("total_points", "Punkte", 0), col("percentage", "Prozent", (v) => `${num(v)} %`), colText("bonus_round", "Bonusrunde")], ev, { onRow: (r) => openEvent(r.event_id, "Event Result Team") }),
+      table("Events", [colText("event_date", "Datum"), colText("location", "Ort"), colNum("position", "Platz", 0), colNum("total_points", "Punkte", 0), col("percentage", "Punkte (% des Siegerteams)", (v) => `${num(v)} %`), colText("bonus_round", "Bonusrunde")], ev, { onRow: (r) => openEvent(r.event_id, "Event Result Team") }),
     ];
   },
 
@@ -391,7 +391,7 @@ const RENDERERS = {
       chart("Radar – Platzierung", "radar", { labels, datasets: [
         radarSet(d.team_name, rounds.map((r) => r.placement_score), 1),
       ] }, radarOptions((r) => (r.position == null ? "–" : `Platz ${r.position} / ${r.total_teams}`)), { height: 480, half: true }),
-      table("Kategorierangliste", [colText("round_name", "Runde"), colNum("avg_points", "Ø Punkte", 2), colNum("position", "Platz", 0), colNum("total_teams", "von", 0), colNum("avg_score", "Ø normiert", 2), colNum("placement_score", "Platz normiert", 2), colNum("events", "Events", 0)], rounds),
+      table("Kategorierangliste", [colText("round_name", "Runde"), colNum("avg_points", "Ø Punkte", 2), colNum("position", "Platz", 0), colNum("events", "Events", 0)], rounds),
     ];
   },
 
@@ -419,10 +419,10 @@ const RENDERERS = {
     return [
       kpis([{ label: "Teams", value: d.teams_count }, { label: "Konstantestes Team", value: rows.slice().sort((a, b) => a.cv_percent - b.cv_percent)[0]?.team_name ?? "–", sub: "niedrigster Variationskoeffizient" }]),
       chart("Ø Punkte vs. Streuung (links unten = schwach & konstant, rechts unten = stark & konstant)", "scatter", { datasets: [{ label: "Teams", data: rows.map((r) => ({ x: r.avg_points, y: r.stddev, name: r.team_name })), backgroundColor: rows.map((r) => (r.team_name.toLowerCase() === hl ? PALETTE[1] : PALETTE[0] + "aa")), pointRadius: rows.map((r) => (r.team_name.toLowerCase() === hl ? 8 : 5)) }] }, {
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${c.raw.name}: Ø ${num(c.raw.x, 1)}, σ ${num(c.raw.y, 2)}` } } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${c.raw.name}: Ø ${num(c.raw.x, 1)}, Standardabweichung ${num(c.raw.y, 2)}` } } },
         scales: { x: { title: { display: true, text: "Ø Punkte", color: cssVar("--muted") }, beginAtZero: false }, y: { title: { display: true, text: "Standardabweichung", color: cssVar("--muted") } } },
       }, { height: 420 }),
-      table("Konstanz", [colText("team_name", "Team"), colNum("events", "Events", 0), colNum("avg_points", "Ø Punkte", 2), colNum("stddev", "σ", 2), colNum("cv_percent", "CV %", 1), colNum("min_points", "Min", 0), colNum("max_points", "Max", 0)], rows),
+      table("Konstanz", [colText("team_name", "Team"), colNum("events", "Events", 0), colNum("avg_points", "Ø Punkte", 2), colNum("stddev", "Standardabweichung", 2), colNum("cv_percent", "CV %", 1), colNum("min_points", "Min", 0), colNum("max_points", "Max", 0)], rows),
     ];
   },
 
@@ -436,11 +436,11 @@ const RENDERERS = {
   },
 
   difficulty(d) {
-    const r = d.rounds.slice().sort((a, b) => a.avg_points - b.avg_points);
+    const r = d.rounds.slice().sort((a, b) => a.reachable_percent - b.reachable_percent);
     return [
-      kpis([{ label: "Events", value: d.events_count }, { label: "Schwerste Runde", value: r[0]?.round_name ?? "–", sub: r[0] ? `Ø ${num(r[0].avg_points, 2)}` : "" }, { label: "Leichteste Runde", value: r.at(-1)?.round_name ?? "–", sub: r.length ? `Ø ${num(r.at(-1).avg_points, 2)}` : "" }]),
-      chart("Ø Punkte je Runde (niedriger = schwerer)", "bar", { labels: r.map((x) => x.round_name), datasets: [dataset("Ø Punkte", r.map((x) => x.avg_points), 0)] }, { plugins: { legend: { display: false } } }),
-      table("Kategorieschwierigkeit", [colText("round_name", "Runde"), colNum("samples", "Stichproben", 0), colNum("avg_points", "Ø Punkte", 2), colNum("stddev", "σ", 2), colNum("min_points", "Min", 1), colNum("max_points", "Max", 1)], d.rounds, { sort: { key: "avg_points" } }),
+      kpis([{ label: "Events", value: d.events_count }, { label: "Schwerste Kategorie", value: r[0]?.round_name ?? "–", sub: r[0] ? `${num(r[0].reachable_percent, 1)} %` : "" }, { label: "Leichteste Kategorie", value: r.at(-1)?.round_name ?? "–", sub: r.length ? `${num(r.at(-1).reachable_percent, 1)} %` : "" }]),
+      chart("Anteil der erreichbaren Punkte je Runde", "bar", { labels: r.map((x) => x.round_name), datasets: [dataset("Erreichbare Punkte (%)", r.map((x) => x.reachable_percent), 0)] }, { plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${num(c.raw, 1)} % der erreichbaren Punkte`, afterLabel: (c) => `Ø ${num(r[c.dataIndex].avg_points, 2)} Punkte` } } }, scales: { y: { ticks: { callback: (value) => `${value} %` } } } }),
+      table("Kategorieschwierigkeit", [colText("round_name", "Runde"), colNum("avg_points", "Ø Punkte", 2), col("reachable_percent", "Prozent der erreichbaren Punkte", (v) => `${num(v, 1)} %`), colNum("stddev", "Standardabweichung", 2)], d.rounds, { sort: { key: "reachable_percent" } }),
     ];
   },
 
@@ -450,7 +450,7 @@ const RENDERERS = {
       kpis([{ label: "Event", value: d.event.event_date, sub: d.event.location }, { label: "Jahr", value: d.year }]),
       chart("Ø Punkte: dieses Event vs. andere", "bar", { labels: r.map((x) => x.round_name), datasets: [dataset("Dieses Event", r.map((x) => x.event_avg), 0), dataset("Andere Events", r.map((x) => x.other_avg), 1)] }, {}, { half: true }),
       chart("Differenz (positiv = leichter als sonst)", "bar", { labels: r.map((x) => x.round_name), datasets: [{ label: "Differenz", data: r.map((x) => x.diff), backgroundColor: r.map((x) => (x.diff >= 0 ? "#10b981cc" : "#ef4444cc")), borderRadius: 6 }] }, { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: false } } }, { half: true }),
-      table("Runden", [colText("round_name", "Runde"), colNum("event_avg", "Event Ø", 2), colNum("other_avg", "Andere Ø", 2), colNum("diff", "Differenz", 2), colNum("event_samples", "Stichproben", 0)], r),
+      table("Runden", [colText("round_name", "Runde"), colNum("event_avg", "Event Ø", 2), colNum("other_avg", "Andere Ø", 2), colNum("diff", "Differenz", 2)], r),
     ];
   },
 

@@ -234,7 +234,7 @@ def get_championship_standings(year: int, db_path: str = DB_PATH_DEFAULT) -> Dic
         for event in events:
             rows = conn.execute(
                 """
-                SELECT team_name, team_rank
+                SELECT team_name, team_rank, total
                 FROM quiz_teams
                 WHERE event_id = ?
                 ORDER BY COALESCE(team_rank, 9999), total DESC, puzzle_points DESC, team_name ASC
@@ -252,11 +252,21 @@ def get_championship_standings(year: int, db_path: str = DB_PATH_DEFAULT) -> Dic
                         "points": 0,
                         "events_count": 0,
                         "wins": 0,
+                        "total_points_sum": 0,
+                        "total_points_events": 0,
                     }
                 standings[team_name]["points"] += points
                 standings[team_name]["events_count"] += 1
+                if row["total"] is not None:
+                    standings[team_name]["total_points_sum"] += row["total"]
+                    standings[team_name]["total_points_events"] += 1
                 if rank == 1:
                     standings[team_name]["wins"] += 1
+
+        for entry in standings.values():
+            counted = entry.pop("total_points_events")
+            total_sum = entry.pop("total_points_sum")
+            entry["avg_total_points"] = total_sum / counted if counted else None
 
         sorted_standings = sorted(
             standings.values(),
@@ -2206,18 +2216,6 @@ def get_round_difficulty_report(year: int, db_path: str = DB_PATH_DEFAULT) -> Di
 
         rows = conn.execute(
             """
-            WITH ranked_teams AS (
-                SELECT
-                    t.id,
-                    t.event_id,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY t.event_id
-                        ORDER BY COALESCE(t.team_rank, 9999), t.total DESC, t.puzzle_points DESC, t.team_name ASC
-                    ) AS rn
-                FROM quiz_teams t
-                JOIN quiz_events e ON e.id = t.event_id
-                WHERE e.event_date LIKE ?
-            )
             SELECT
                 ts.round_name,
                 CASE
@@ -2230,8 +2228,8 @@ def get_round_difficulty_report(year: int, db_path: str = DB_PATH_DEFAULT) -> Di
                 END AS adjusted_points
             FROM team_scores ts
             JOIN quiz_teams qt ON qt.id = ts.team_id
-                        JOIN ranked_teams rt ON rt.id = qt.id
-                        WHERE rt.rn <= 30
+            JOIN quiz_events e ON e.id = qt.event_id
+            WHERE e.event_date LIKE ?
               AND ts.points IS NOT NULL
             """,
             (year_prefix,),
@@ -2269,6 +2267,15 @@ def get_round_difficulty_report(year: int, db_path: str = DB_PATH_DEFAULT) -> Di
                 "round_name": round_name,
                 "samples": count,
                 "avg_points": avg_points,
+                "reachable_percent": (
+                    avg_points
+                    / (
+                        TEAM_REPORT_PUZZLE_MAX_POINTS
+                        if round_name == PUZZLE_NAME
+                        else TEAM_REPORT_ROUND_MAX_POINTS.get(round_name, 5)
+                    )
+                    * 100
+                ),
                 "stddev": stddev,
                 "min_points": min(values),
                 "max_points": max(values),
@@ -2335,17 +2342,6 @@ def get_event_difficulty_report(
 
         event_rows = conn.execute(
             """
-            WITH ranked_teams AS (
-                SELECT
-                    t.id,
-                    t.event_id,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY t.event_id
-                        ORDER BY COALESCE(t.team_rank, 9999), t.total DESC, t.puzzle_points DESC, t.team_name ASC
-                    ) AS rn
-                FROM quiz_teams t
-                WHERE t.event_id = ?
-            )
             SELECT
                 ts.round_name,
                 AVG(
@@ -2361,29 +2357,15 @@ def get_event_difficulty_report(
                 COUNT(*) AS samples
             FROM team_scores ts
             JOIN quiz_teams qt ON qt.id = ts.team_id
-            JOIN ranked_teams rt ON rt.id = qt.id
             WHERE qt.event_id = ?
-              AND rt.rn <= 30
               AND ts.points IS NOT NULL
             GROUP BY ts.round_name
             """,
-            (resolved_event_id, resolved_event_id),
+            (resolved_event_id,),
         ).fetchall()
 
         other_rows = conn.execute(
             """
-            WITH ranked_teams AS (
-                SELECT
-                    t.id,
-                    t.event_id,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY t.event_id
-                        ORDER BY COALESCE(t.team_rank, 9999), t.total DESC, t.puzzle_points DESC, t.team_name ASC
-                    ) AS rn
-                FROM quiz_teams t
-                JOIN quiz_events e ON e.id = t.event_id
-                WHERE e.event_date LIKE ?
-            )
             SELECT
                 ts.round_name,
                 AVG(
@@ -2399,13 +2381,13 @@ def get_event_difficulty_report(
                 COUNT(*) AS samples
             FROM team_scores ts
             JOIN quiz_teams qt ON qt.id = ts.team_id
-                        JOIN ranked_teams rt ON rt.id = qt.id
-                        WHERE rt.rn <= 30
-                            AND qt.event_id != ?
+            JOIN quiz_events e ON e.id = qt.event_id
+            WHERE e.event_date LIKE ?
+              AND qt.event_id != ?
               AND ts.points IS NOT NULL
             GROUP BY ts.round_name
             """,
-                        (year_prefix, resolved_event_id),
+            (year_prefix, resolved_event_id),
         ).fetchall()
         event_puzzle_row = conn.execute(
             """
