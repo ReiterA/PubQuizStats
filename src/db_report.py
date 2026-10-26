@@ -2198,13 +2198,13 @@ def print_consistency_report(year: int, min_events: int = 2, db_path: str = DB_P
         return
 
     print(
-        f"{'Pos':>4}  {'Team':30}  {'Events':>6}  {'Avg':>6}  {'StdDev':>7}  {'CV%':>6}  {'Min':>4}  {'Max':>4}"
+        f"{'Pos':>4}  {'Team':30}  {'Events':>6}  {'Avg':>6}  {'StdDev':>7}  {'CV%':>6}  {'Max':>4}  {'Min':>4}"
     )
     print("""----  ------------------------------  ------  ------  -------  ------  ----  ----""")
 
     for pos, team in enumerate(standings, start=1):
         print(
-            f"{pos:>4}  {team['team_name'][:30]:30}  {team['events']:>6}  {team['avg_points']:>6.2f}  {team['stddev']:>7.2f}  {team['cv_percent']:>6.2f}  {team['min_points']:>4}  {team['max_points']:>4}"
+            f"{pos:>4}  {team['team_name'][:30]:30}  {team['events']:>6}  {team['avg_points']:>6.2f}  {team['stddev']:>7.2f}  {team['cv_percent']:>6.2f}  {team['max_points']:>4}  {team['min_points']:>4}"
         )
 
 
@@ -2319,11 +2319,11 @@ def print_round_difficulty_report(year: int, db_path: str = DB_PATH_DEFAULT) -> 
         print("No round data found for this year.")
         return
 
-    print(f"{'Pos':>4}  {'Round':20}  {'Avg':>6}  {'StdDev':>7}  {'Min':>4}  {'Max':>4}  {'Samples':>7}")
+    print(f"{'Pos':>4}  {'Round':20}  {'Avg':>6}  {'StdDev':>7}  {'Max':>4}  {'Min':>4}  {'Samples':>7}")
     print("""----  --------------------  ------  -------  ----  ----  -------""")
     for pos, row in enumerate(rounds, start=1):
         print(
-            f"{pos:>4}  {row['round_name'][:20]:20}  {row['avg_points']:>6.2f}  {row['stddev']:>7.2f}  {row['min_points']:>4.1f}  {row['max_points']:>4.1f}  {row['samples']:>7}"
+            f"{pos:>4}  {row['round_name'][:20]:20}  {row['avg_points']:>6.2f}  {row['stddev']:>7.2f}  {row['max_points']:>4.1f}  {row['min_points']:>4.1f}  {row['samples']:>7}"
         )
 
 
@@ -2630,6 +2630,26 @@ def get_puzzle_category_report(
 ) -> Dict:
     """Return the average puzzle points per puzzle category (over all teams and events)."""
     events = get_theme_difficulty_report(year=year, db_path=db_path)["events"]
+    year_filter = ""
+    params: List = []
+    if year is not None:
+        year_filter = " AND e.event_date LIKE ?"
+        params.append(f"{year:04d}-%")
+
+    with _connect(db_path) as conn:
+        score_rows = conn.execute(
+            f"""
+            SELECT et.puzzle_category, qt.event_id, qt.team_name, qt.puzzle_points
+            FROM event_themes et
+            JOIN quiz_events e ON e.id = et.event_id
+            JOIN quiz_teams qt ON qt.event_id = e.id
+            WHERE et.puzzle_category IS NOT NULL
+              AND TRIM(et.puzzle_category) != ''
+              AND qt.puzzle_points IS NOT NULL
+              {year_filter}
+            """,
+            params,
+        ).fetchall()
 
     grouped: Dict[str, Dict] = {}
     for event in events:
@@ -2642,16 +2662,29 @@ def get_puzzle_category_report(
         if event["puzzle_solution"]:
             entry["solutions"].append(f"{event['puzzle_solution']} ({event['event_date']})")
 
+    for row in score_rows:
+        category = str(row["puzzle_category"]).strip()
+        entry = grouped.get(category.casefold())
+        if entry is None:
+            continue
+        scores_by_team_event = entry.setdefault("scores_by_team_event", {})
+        key = (_canonical_team_name(row["team_name"]), int(row["event_id"]))
+        score = float(row["puzzle_points"])
+        previous = scores_by_team_event.get(key)
+        if previous is None or score > previous:
+            scores_by_team_event[key] = score
+
     categories = [
         {
             "category": entry["category"],
             "events": len(entry["values"]),
             "avg_points": sum(entry["values"]) / len(entry["values"]),
-            "min_points": min(entry["values"]),
-            "max_points": max(entry["values"]),
+            "min_points": min(entry["scores_by_team_event"].values()),
+            "max_points": max(entry["scores_by_team_event"].values()),
             "solutions": entry["solutions"],
         }
         for entry in grouped.values()
+        if entry.get("scores_by_team_event")
     ]
     categories.sort(key=lambda c: (-c["avg_points"], c["category"]))
 
@@ -2670,10 +2703,10 @@ def print_puzzle_category_report(
     if not result["categories"]:
         print("No puzzle category data found.")
         return
-    print(f"{'Category':24}  {'Events':>6}  {'Avg':>6}  {'Min':>6}  {'Max':>6}")
+    print(f"{'Category':24}  {'Events':>6}  {'Avg':>6}  {'Max':>6}  {'Min':>6}")
     print("------------------------  ------  ------  ------  ------")
     for c in result["categories"]:
-        print(f"{c['category'][:24]:24}  {c['events']:>6}  {c['avg_points']:>6.2f}  {c['min_points']:>6.2f}  {c['max_points']:>6.2f}")
+        print(f"{c['category'][:24]:24}  {c['events']:>6}  {c['avg_points']:>6.2f}  {c['max_points']:>6.2f}  {c['min_points']:>6.2f}")
 
 
 def get_round_strength_ranking(
@@ -2755,14 +2788,7 @@ def get_round_strength_ranking(
         rankings.append(
             {
                 "round_name": PUZZLE_NAME,
-                "teams": [
-                    {
-                        **team,
-                        "best": team["avg_points"],
-                        "worst": team["avg_points"],
-                    }
-                    for team in puzzle_teams
-                ],
+                "teams": puzzle_teams,
             }
         )
         rankings.sort(key=lambda block: CATEGORY_ORDER.get(block["round_name"], 999))
@@ -2822,7 +2848,7 @@ def print_round_strength_ranking(
 
             pos, team = selected_row
             total_ranked = len(block["teams"])
-            print(f"{'Pos':>4}  {'Team':30}  {'Avg':>6}  {'Events':>6}  {'Best':>5}  {'Worst':>5}  {'Of':>4}")
+            print(f"{'Pos':>4}  {'Team':30}  {'Avg':>6}  {'Events':>6}  {'Max':>5}  {'Min':>5}  {'Of':>4}")
             print("""----  ------------------------------  ------  ------  -----  -----  ----""")
             print(
                 f"{pos:>4}  {team['team_name'][:30]:30}  {team['avg_points']:>6.2f}  {team['events']:>6}  {team['best']:>5.1f}  {team['worst']:>5.1f}  {total_ranked:>4}"
@@ -2830,7 +2856,7 @@ def print_round_strength_ranking(
             print()
             continue
 
-        print(f"{'Pos':>4}  {'Team':30}  {'Avg':>6}  {'Events':>6}  {'Best':>5}  {'Worst':>5}")
+        print(f"{'Pos':>4}  {'Team':30}  {'Avg':>6}  {'Events':>6}  {'Max':>5}  {'Min':>5}")
         print("""----  ------------------------------  ------  ------  -----  -----""")
         for pos, team in enumerate(block["teams"][:top], start=1):
             print(
@@ -2886,6 +2912,8 @@ def _get_puzzle_leaderboard(
                 "team_name": team_name,
                 "avg_points": avg_points,
                 "events": events,
+                "best": max(values),
+                "worst": min(values),
             }
         )
 

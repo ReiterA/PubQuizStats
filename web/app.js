@@ -423,7 +423,7 @@ const RENDERERS = {
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${c.raw.name}: Ø ${num(c.raw.x, 1)}, Standardabweichung ${num(c.raw.y, 2)}` } } },
         scales: { x: { title: { display: true, text: "Ø Punkte", color: cssVar("--muted") }, beginAtZero: false }, y: { title: { display: true, text: "Standardabweichung", color: cssVar("--muted") } } },
       }, { height: 420 }),
-      table("Konstanz", [colText("team_name", "Team"), colNum("events", "Events", 0), colNum("avg_points", "Ø Punkte", 2), colNum("stddev", "Standardabweichung", 2), colNum("cv_percent", "CV %", 1), colNum("min_points", "Min", 0), colNum("max_points", "Max", 0)], rows),
+      table("Konstanz", [colText("team_name", "Team"), colNum("events", "Events", 0), colNum("avg_points", "Ø Punkte", 2), colNum("stddev", "Standardabweichung", 2), colNum("cv_percent", "CV %", 1), colNum("max_points", "Max", 0), colNum("min_points", "Min", 0)], rows),
     ];
   },
 
@@ -469,7 +469,7 @@ const RENDERERS = {
       if (d.rankings.length === 1) {
         blocks.push(chart(`${rk.round_name} – Top ${top}`, "bar", { labels: shown.map((t) => `${t.pos}. ${t.team_name}`), datasets: [dataset("Ø Punkte", shown.map((t) => t.avg_points), i, { backgroundColor: barColors(shown.map((t) => t.team_name), i) })] }, { indexAxis: "y", plugins: { legend: { display: false } } }, { height: Math.max(320, shown.length * 30) }));
       }
-      blocks.push(table(`${rk.round_name} (${teams.length} Teams)`, [colNum("pos", "Platz", 0), colText("team_name", "Team"), colNum("avg_points", "Ø Punkte", 2), colNum("events", "Events", 0), colNum("best", "Best", 1), colNum("worst", "Worst", 1)], shown));
+      blocks.push(table(`${rk.round_name} (${teams.length} Teams)`, [colNum("pos", "Platz", 0), colText("team_name", "Team"), colNum("avg_points", "Ø Punkte", 2), colNum("events", "Events", 0), colNum("best", "Max", 1), colNum("worst", "Min", 1)], shown));
     });
     return blocks;
   },
@@ -479,7 +479,7 @@ const RENDERERS = {
     return [
       kpis([{ label: "Puzzle-Kategorien", value: c.length }]),
       chart("Ø Punkte je Puzzle-Kategorie", "bar", { labels: c.map((x) => x.category), datasets: [dataset("Ø Punkte", c.map((x) => x.avg_points), 0)] }, { plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: (t) => [`${c[t.dataIndex].events} Event(s)`, ...c[t.dataIndex].solutions.map((x) => `Lösung: ${x}`)] } } }, scales: { y: { beginAtZero: true, max: 10 } } }, { height: 380 }),
-      table("Puzzle-Kategorien", [colText("category", "Kategorie"), colNum("events", "Events", 0), colNum("avg_points", "Ø Punkte", 2), colNum("min_points", "Min Ø", 2), colNum("max_points", "Max Ø", 2)], c),
+      table("Puzzle-Kategorien", [colText("category", "Kategorie"), colNum("events", "Events", 0), colNum("avg_points", "Ø Punkte", 2), colNum("max_points", "Max", 0), colNum("min_points", "Min", 0)], c),
     ];
   },
 
