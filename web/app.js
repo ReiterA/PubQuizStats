@@ -931,11 +931,12 @@ async function boot() {
   const m = state.meta;
   $("#db-label").textContent = m.db_path;
   setupAuth();
-  if (!m.years.map(String).includes(String(state.params.year))) state.params.year = String(m.years[0]);
-  if (!state.params.team) state.params.team = m.default_team || "";
-  if (!m.events.some((e) => String(e.id) === String(state.params.event_id))) {
-    state.params.event_id = String(m.events.slice().sort((a, b) => b.event_date.localeCompare(a.event_date))[0]?.id ?? "");
-  }
+  state.params.year = String(m.years[0]);
+  const latestEvent = m.events.slice().sort(
+    (a, b) => b.event_date.localeCompare(a.event_date) || Number(b.id) - Number(a.id),
+  )[0];
+  state.params.event_id = String(latestEvent?.id ?? "");
+  saveParams();
   await loadTeams();
   buildNav();
   const hash = decodeURIComponent(location.hash.slice(1));
