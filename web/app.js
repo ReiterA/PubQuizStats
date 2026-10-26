@@ -90,6 +90,7 @@ const REPORTS = {
   "bonus-efficiency": { group: "Team", label: "Bonus-Effizienz", desc: "Wie gut wurde die Bonusrunde genutzt? Die Bonus-Effizienz setzt die Punkte, die mit der gewählten Bonusrunde erzielt wurden, ins Verhältnis zu den Punkten, die maximal möglich gewesen wären. Als Maßstab dient die beste Ausbeute, die das Team in einer der anderen Kategorien erreicht hat, denn dort hätte der Bonus am meisten gebracht. Bei der Kategorie „Interessantes“ ist nicht bekannt, ob das Anagramm richtig gelöst wurde. Deshalb wird dort per Wahrscheinlichkeitsschätzung abgeleitet, ob das Anagramm richtig war, und die möglichen Bonuspunkte werden entsprechend geschätzt. 100 % bedeuten: Die Bonusrunde war die bestmögliche Wahl.", needs: ["year", "team"], teamExports: true },
   "Bonus Details": { group: "Team", label: "Bonus-Details", desc: "Welche Bonuspunkte in welcher Kategorie möglich gewesen wären. Für jede Kategorie wird berechnet, wie viele Punkte das Team erreicht hätte, wenn es sie als Bonusrunde gewählt hätte. Puzzle- und Bilderrunde sind als Bonusrunde nicht möglich und bleiben unberücksichtigt. Bei der Kategorie „Interessantes“ ist nicht bekannt, ob das Anagramm richtig gelöst wurde. Deshalb wird dort per Wahrscheinlichkeitsschätzung abgeleitet, wie wahrscheinlich das Anagramm richtig war, und daraus ein erwarteter Bonuswert ermittelt.", needs: ["year", "team"], teamExports: true },
   "team-category-detail": { group: "Team", label: "Themenrunden-Details", desc: "Puzzle-, Bild- und Überraschungsrunde des Teams pro Event", needs: ["year", "team"], teamExports: true, exports: [{ label: "Kategorie-PDF", kind: "team-category-pdf" }] },
+  "team-puzzle-details": { group: "Team", label: "Puzzle-Details", desc: "Punkteschnitt des Teams je Puzzle-Kategorie im Vergleich zum Feld", needs: ["year", "team"] },
 
   difficulty: { group: "Kategorien", label: "Kategorieschwierigkeit", desc: "Durchschnittspunkte je Kategorie über alle Teams", needs: ["year"] },
   "round-strength": { group: "Kategorien", label: "Kategorierangliste", desc: "Rangliste der besten Teams je Kategorie", needs: ["year", "round", "min_events", "top", "team"] },
@@ -372,6 +373,36 @@ const RENDERERS = {
       chart("Rundenschnitt: Team vs. Feld", "bar", { labels: rounds.map((r) => r.round_name), datasets: [dataset(d.team.team_name, rounds.map((r) => r.avg_points), 0), dataset("Ø aller Teams", rows.map((r) => r.overall), 1)] }),
       chart("Differenz zum Feld", "bar", { labels: rows.map((r) => r.round_name), datasets: [{ label: "Differenz", data: rows.map((r) => r.diff), backgroundColor: rows.map((r) => (r.diff >= 0 ? "#10b981cc" : "#ef4444cc")), borderRadius: 6 }] }, { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: false } } }, { height: 280 }),
       table("Rundenschnitte", [colText("round_name", "Runde"), colNum("avg_points", "Team Ø", 2), colNum("overall", "Feld Ø", 2), col("diff", "Differenz", (v) => (v == null ? "–" : `<span class="pill ${v >= 0 ? "ok" : "err"}">${v >= 0 ? "+" : ""}${num(v, 2)}</span>`), "num"), colNum("appearances", "Events", 0)], rows),
+    ];
+  },
+
+  "team-puzzle-details"(d) {
+    const categories = d.categories;
+    return [
+      kpis([{ label: "Puzzle-Kategorien", value: categories.length }, { label: "Team", value: d.team_name }]),
+      chart("Ø Punkte je Puzzle-Kategorie: Team vs. Feld", "bar", {
+        labels: categories.map((category) => category.category),
+        datasets: [
+          dataset(d.team_name, categories.map((category) => category.team_avg_points), 1),
+          dataset("Ø aller Teams", categories.map((category) => category.field_avg_points), 0),
+        ],
+      }, { scales: { y: { beginAtZero: true, max: 10 } } }, { height: Math.max(320, categories.length * 38) }),
+      chart("Differenz zum Feld", "bar", {
+        labels: categories.map((category) => category.category),
+        datasets: [{
+          label: "Differenz",
+          data: categories.map((category) => category.difference),
+          backgroundColor: categories.map((category) => (category.difference >= 0 ? "#10b981cc" : "#ef4444cc")),
+          borderRadius: 6,
+        }],
+      }, { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: false } } }, { height: Math.max(280, categories.length * 34) }),
+      table("Puzzle-Kategorien", [
+        colText("category", "Kategorie"),
+        colNum("team_avg_points", "Team Ø", 2),
+        colNum("field_avg_points", "Feld Ø", 2),
+        col("difference", "Differenz", (value) => (value == null ? "–" : `<span class="pill ${value >= 0 ? "ok" : "err"}">${value >= 0 ? "+" : ""}${num(value, 2)}</span>`), "num"),
+        colNum("team_events", "Team-Events", 0),
+      ], categories),
     ];
   },
 

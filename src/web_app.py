@@ -79,6 +79,7 @@ REPORT_TYPES = [
     "leaders",
     "team",
     "averages",
+    "team-puzzle-details",
     "radar",
     "bonus-efficiency",
     "Bonus Details",
@@ -213,6 +214,13 @@ def run_report(report: str, p: Params) -> dict:
                 "overall": db_report.get_overall_round_averages(year, db),
             },
             "text": _capture(db_report.print_team_round_averages, team, year, db),
+        }
+    if report == "team-puzzle-details":
+        team = p.team()
+        result = db_report.get_team_puzzle_category_report(team, year, db)
+        return {
+            "data": result,
+            "text": _capture(db_report.print_team_puzzle_category_report, team, year, db),
         }
     if report == "radar":
         # The print variant writes an SVG file as a side effect, so no text output here.

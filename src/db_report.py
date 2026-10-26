@@ -1056,6 +1056,94 @@ def get_team_round_averages(team_name: str, year: int, db_path: str = DB_PATH_DE
         }
 
 
+def get_team_puzzle_category_report(team_name: str, year: int, db_path: str = DB_PATH_DEFAULT) -> Dict:
+    """Return team and field average puzzle points for each puzzle category."""
+    if not team_name or not team_name.strip():
+        raise ValueError("Team name is required.")
+
+    canonical_team = _canonical_team_name(team_name)
+    year_prefix = f"{year:04d}-%"
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT et.puzzle_category, qt.event_id, qt.team_name, qt.puzzle_points
+            FROM quiz_teams qt
+            JOIN quiz_events e ON e.id = qt.event_id
+            JOIN event_themes et ON et.event_id = e.id
+            WHERE e.event_date LIKE ?
+              AND et.puzzle_category IS NOT NULL
+              AND TRIM(et.puzzle_category) != ''
+              AND qt.puzzle_points IS NOT NULL
+            """,
+            (year_prefix,),
+        ).fetchall()
+
+    scores_by_category: Dict[str, Dict] = {}
+    for row in rows:
+        category = str(row["puzzle_category"]).strip()
+        category_key = category.casefold()
+        entry = scores_by_category.setdefault(
+            category_key,
+            {"category": category, "scores_by_team_event": {}},
+        )
+        team_event = (_canonical_team_name(row["team_name"]), int(row["event_id"]))
+        score = float(row["puzzle_points"])
+        previous = entry["scores_by_team_event"].get(team_event)
+        if previous is None or score > previous:
+            entry["scores_by_team_event"][team_event] = score
+
+    categories = []
+    for entry in scores_by_category.values():
+        scores_by_team_event = entry["scores_by_team_event"]
+        team_scores = [
+            score
+            for (candidate_team, _), score in scores_by_team_event.items()
+            if candidate_team == canonical_team
+        ]
+        if not team_scores:
+            continue
+        field_scores = list(scores_by_team_event.values())
+        team_avg_points = sum(team_scores) / len(team_scores)
+        field_avg_points = sum(field_scores) / len(field_scores)
+        categories.append(
+            {
+                "category": entry["category"],
+                "team_avg_points": team_avg_points,
+                "field_avg_points": field_avg_points,
+                "difference": team_avg_points - field_avg_points,
+                "team_events": len(team_scores),
+                "field_samples": len(field_scores),
+            }
+        )
+
+    categories.sort(key=lambda row: row["category"].casefold())
+    return {
+        "team_name": canonical_team,
+        "year": year,
+        "categories": categories,
+    }
+
+
+def print_team_puzzle_category_report(team_name: str, year: int, db_path: str = DB_PATH_DEFAULT) -> None:
+    """Print team and field average puzzle points for each puzzle category."""
+    result = get_team_puzzle_category_report(team_name, year, db_path)
+    print(f"Puzzle category details for {result['team_name']} ({year})")
+    print()
+    if not result["categories"]:
+        print("No puzzle category data found for this team and year.")
+        return
+    print(f"{'Category':24}  {'Team Avg':>8}  {'Field Avg':>9}  {'Diff':>7}  {'Events':>6}")
+    print("------------------------  --------  ---------  -------  ------")
+    for category in result["categories"]:
+        print(
+            f"{category['category'][:24]:24}  "
+            f"{category['team_avg_points']:>8.2f}  "
+            f"{category['field_avg_points']:>9.2f}  "
+            f"{category['difference']:>+7.2f}  "
+            f"{category['team_events']:>6}"
+        )
+
+
 def get_overall_round_averages(year: int, db_path: str = DB_PATH_DEFAULT) -> Dict:
     """Return average round points across all teams in the given year."""
     year_prefix = f"{year:04d}-%"
