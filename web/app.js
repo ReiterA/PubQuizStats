@@ -284,6 +284,7 @@ const RENDERERS = {
         { label: "Siegerteam", value: teams[0]?.team_name ?? "–", sub: teams[0] ? `${teams[0].total} Punkte` : "" },
         { label: "Ø Punkte", value: num(teams.reduce((s, t) => s + t.total, 0) / (teams.length || 1)) },
       ]),
+      table("Rundenthemen", [colText("puzzle_category", "Puzzle-Kategorie"), colText("puzzle_solution", "Puzzle-Lösung"), colText("image_round_topic", "Bilderrunde-Thema"), colText("surprise_round_topic", "Überraschungsrunden-Thema")], [d.event]),
       chart("Top 15 – Gesamtpunkte", "bar", { labels: top.map((t) => t.team_name), datasets: [dataset("Gesamt", top.map((t) => t.total), 0, { backgroundColor: barColors(top.map((t) => t.team_name)) }), dataset("davon Puzzle", top.map((t) => t.puzzle_points), 2)] }, { indexAxis: "y" }, { height: Math.max(340, top.length * 30) }),
       table("Ergebnis", [colNum("team_rank", "Rang", 0), colText("team_name", "Team"), colNum("total", "Punkte", 0), colNum("puzzle_points", "Puzzle", 0), colText("bonus_round", "Bonusrunde")], teams),
     ];
@@ -300,6 +301,7 @@ const RENDERERS = {
         { label: "Bonus-Effizienz", value: pct(t.bonus_efficiency), sub: `${t.bonus_round} · ${num(t.achieved_bonus_points)}/${num(t.possible_bonus_points)}` },
         { label: "Puzzle", value: t.puzzle_points, sub: `Platz ${t.puzzle_position}/${t.puzzle_total_teams} · Ø ${num(t.puzzle_average)}` },
       ]),
+      table("Rundenthemen", [colText("puzzle_category", "Puzzle-Kategorie"), colText("puzzle_solution", "Puzzle-Lösung"), colText("image_round_topic", "Bilderrunde-Thema"), colText("surprise_round_topic", "Überraschungsrunden-Thema")], [d.event]),
       chart("Rundenpunkte vs. Feld", "bar", { labels: rounds.map((r) => r.round_name), datasets: [dataset("Team", rounds.map((r) => r.points), 0), dataset("Ø aller Teams", rounds.map((r) => r.category_average_points), 1)] }),
       table("Runden", [colText("round_name", "Runde"), colNum("raw_points", "Punkte"), colNum("points", "Punkte ohne Bonus"), col("is_bonus_round", "Bonus", (v) => (v ? '<span class="pill">Bonus</span>' : ""), ""), colNum("category_position", "Platz", 0), colNum("category_average_points", "Ø Feld", 2)], rounds),
     ];

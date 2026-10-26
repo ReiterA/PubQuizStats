@@ -405,9 +405,19 @@ def get_event_team_result(
     with _connect(db_path) as conn:
         event_row = conn.execute(
             """
-            SELECT id, event_date, location, source_file, imported_at
-            FROM quiz_events
-            WHERE id = ?
+            SELECT
+                e.id,
+                e.event_date,
+                e.location,
+                e.source_file,
+                e.imported_at,
+                et.puzzle_category,
+                et.puzzle_solution,
+                et.image_round_topic,
+                et.surprise_round_topic
+            FROM quiz_events e
+            LEFT JOIN event_themes et ON et.event_id = e.id
+            WHERE e.id = ?
             """,
             (resolved_event_id,),
         ).fetchone()
