@@ -105,7 +105,6 @@ const GROUPS = ["Meisterschaft", "Events", "Team", "Kategorien"];
 const state = {
   meta: null,
   view: "standings",
-  tab: "charts", // charts | text
   params: { year: "", team: "", event_id: "", round_name: "", min_events: 2, top: 10 },
   data: null,
   token: 0,
@@ -548,7 +547,6 @@ function buildNav() {
 function navigate(view) {
   if (ADMIN_VIEWS.includes(view) && !isAdmin()) view = "standings";
   state.view = view;
-  state.tab = "charts";
   location.hash = encodeURIComponent(view);
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   renderView();
@@ -638,7 +636,6 @@ function renderActions(def) {
   const teamNeeded = def.needs.includes("team") && !def.needs.includes("round");
   if (def.teamExports) html += `<button class="btn" data-export="team-pdf">Team-Report (PDF)</button>`;
   (def.exports || []).forEach((e) => { html += `<button class="btn" data-export="${e.kind}">${e.label}</button>`; });
-  html += `<button class="btn" data-export="text-pdf" title="Textausgabe als PDF">Text-PDF</button>`;
   box.innerHTML = html;
   box.querySelectorAll("[data-export]").forEach((b) => b.addEventListener("click", () => {
     const p = state.params;
@@ -690,25 +687,8 @@ function emptyState(icon, message) {
 }
 
 function renderReport() {
-  const { data, text } = state.data;
-  const content = $("#content");
-  if (state.tab === "text" && text) {
-    destroyCharts();
-    content.innerHTML = `<div class="card"><div class="card-head"><h2>Textausgabe</h2>${tabsHtml(true)}</div><pre class="text-output">${esc(text)}</pre></div>`;
-  } else {
-    const blocks = RENDERERS[state.view](data);
-    mountBlocks(blocks);
-    if (text) {
-      const tabs = document.createElement("div");
-      tabs.style.cssText = "grid-column: span 12; display:flex; justify-content:flex-end; order:-1";
-      tabs.innerHTML = tabsHtml(false);
-      content.prepend(tabs);
-    }
-  }
-  content.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => { state.tab = b.dataset.tab; renderReport(); }));
+  mountBlocks(RENDERERS[state.view](state.data.data));
 }
-
-const tabsHtml = (textActive) => `<div class="tabs"><button data-tab="charts" class="${textActive ? "" : "active"}">Diagramme</button><button data-tab="text" class="${textActive ? "active" : ""}">Text</button></div>`;
 
 /* ------------------------------------------------------------------ *
  *  Import view
