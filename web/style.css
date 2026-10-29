@@ -56,6 +56,7 @@ h1, h2, h3 { margin: 0; }
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100dvh;
   overflow-y: auto;
 }
 .brand { display: flex; align-items: center; gap: 12px; padding: 4px 8px 18px; }
@@ -200,7 +201,7 @@ pre.text-output { margin: 0; padding: 14px; background: var(--surface-2); border
   .card.half { grid-column: span 12; }
 }
 @media (max-width: 860px) {
-  .sidebar { position: fixed; left: 0; top: 0; z-index: 40; transform: translateX(-100%); transition: transform .2s; box-shadow: var(--shadow); }
+  .sidebar { position: fixed; left: 0; top: 0; z-index: 40; transform: translateX(-100%); transition: transform .2s; box-shadow: var(--shadow); padding-bottom: calc(18px + env(safe-area-inset-bottom)); overscroll-behavior: contain; }
   .sidebar.open { transform: none; }
   .menu-btn { display: inline-block; }
   .topbar, .filters, .content { padding-left: 16px; padding-right: 16px; }
