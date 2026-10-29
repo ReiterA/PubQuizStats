@@ -52,6 +52,8 @@ python main.py --port 9000 --no-browser
 
 The web GUI (modern, light/dark design) covers all former desktop features: importing quiz files and event themes (drag & drop), every report with interactive charts plus the original text output, PDF exports (team report, team category detail, theme difficulties, standing progress, text report), batch generation of all team reports (with ZIP download) and settings. By default it only listens on `127.0.0.1`; use `--host` to change that.
 
+The web GUI includes an [Impressum](web/impressum.html) and a [Datenschutzerklärung](web/datenschutz.html). Verify that the privacy information matches your server and hosting configuration (Hetzner is named as host).
+
 ## Hosting on a VPS (Hetzner etc.)
 
 Visitors are read-only guests: they only see charts and tables. Import, team reports, all PDF/SVG exports and settings are hidden and blocked on the server (HTTP 403). The admin logs in via "Admin-Login" in the sidebar.
