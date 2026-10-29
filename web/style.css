@@ -80,7 +80,9 @@ h1, h2, h3 { margin: 0; }
 .sidebar-footer { margin-top: auto; padding-top: 16px; }
 .coffee-link { display: flex; justify-content: center; margin: 8px 8px 4px; text-decoration: none; background: #ffdd00; border-color: #ffdd00; color: #000; }
 .coffee-link:hover { background: #ffe94d; }
-.legal-links { display: flex; gap: 14px; padding: 0 8px 12px; }
+.legal-links { display: flex; flex-wrap: wrap; gap: 14px; padding: 0 8px 12px; }
+.legal-content .legal-links { padding: 20px 0 0; }
+.legal-content .legal-links a { color: var(--muted); }
 .legal-links a { color: var(--muted); font-size: 12px; text-decoration: none; }
 .legal-links a:hover { color: var(--primary); text-decoration: underline; }
 
