@@ -84,6 +84,8 @@ const REPORTS = {
   "Event Result Team": { group: "Events", label: "Team-Ergebnis", desc: "Ergebnis des gewählten Teams in einem Event, nach Kategorien", needs: ["event", "team"] },
   "event-difficulty": { group: "Events", label: "Schwierigkeit", desc: "Wie schwer war das Event im Vergleich zu allen anderen, je Kategorie?", needs: ["event"] },
 
+  "event-progress": { group: "Events", label: "Eventverlauf", desc: "Entwicklung der Punkte aller Teams über die Runden eines Events", needs: ["event", "event_top"] },
+
   team: { group: "Team", label: "Überblick", desc: "Saisonverlauf und alle Events des gewählten Teams", needs: ["year", "team"], teamExports: true },
   averages: { group: "Team", label: "Stärken/Schwächen", desc: "In welchen Kategorien das Team über oder unter dem Feld liegt", needs: ["year", "team"], teamExports: true },
   radar: { group: "Team", label: "Radar-Plots", desc: "Punkte und Platzierung des Teams je Kategorie als Radar-Plots", needs: ["year", "team", "min_events"], teamExports: true, exports: [{ label: "Radar SVG", kind: "radar-svg" }] },
@@ -262,7 +264,17 @@ function mountTable(wrap, filterInput, block, hl) {
  * ------------------------------------------------------------------ */
 const labelOf = (e) => `${e.event_date} ${e.location}`;
 const barColors = (names, i = 0) => names.map((n) => (state.params.team && n.toLowerCase() === state.params.team.toLowerCase() ? PALETTE[1] : PALETTE[i] + "cc"));
-const openEvent = (id, view) => { state.params.event_id = String(id); saveParams(); navigate(view); };
+const openEvent = (id, view) => { state.params.event_id = String(id); state.params.event_top = ""; saveParams(); navigate(view); };
+
+function teamLineSets(teams, values) {
+  const sel = (state.params.team || "").toLowerCase();
+  const others = PALETTE.filter((_, k) => ![1, 8, 11].includes(k));
+  return teams.map((t, i) => {
+    const isSel = sel && t.team_name.toLowerCase() === sel;
+    const c = isSel ? "#facc15" : others[i % others.length];
+    return lineSet(t.team_name, values(t), i, { borderColor: c, backgroundColor: c + "33", pointBackgroundColor: c, ...(isSel ? { borderWidth: 6, pointRadius: 4, order: -1 } : { borderWidth: 2, pointRadius: 2, order: 1 }) });
+  });
+}
 
 const RENDERERS = {
   list(events) {
@@ -324,7 +336,7 @@ const RENDERERS = {
   "standing-progress"(d) {
     return [
       kpis([{ label: "Events", value: d.events.length }, { label: "Spitzenreiter", value: d.teams[0]?.team_name ?? "–", sub: d.teams[0] ? `${d.teams[0].final_points} Punkte` : "" }]),
-      chart("Verlauf der Meisterschaftspunkte", "line", { labels: d.events.map((e) => e.label), datasets: d.teams.map((t, i) => lineSet(t.team_name, t.values, i, { borderWidth: 3, pointRadius: 2 })) }, {}, { height: 480 }),
+      chart("Verlauf der Meisterschaftspunkte", "line", { labels: d.events.map((e) => e.label), datasets: teamLineSets(d.teams, (t) => t.values) }, {}, { height: 960 }),
       table("Aktuelle Top-Teams", [colNum("pos", "Pos", 0), colText("team_name", "Team"), colNum("final_points", "Punkte", 0)], d.teams.map((t, i) => ({ ...t, pos: i + 1 }))),
     ];
   },
@@ -487,6 +499,17 @@ const RENDERERS = {
     ];
   },
 
+  "event-progress"(d) {
+    const teams = d.teams;
+    const shown = teams.slice(0, Math.max(1, Number(state.params.event_top) || teams.length));
+    const last = (t) => t.cumulative.at(-1) ?? 0;
+    return [
+      kpis([{ label: "Event", value: d.event.event_date, sub: d.event.location }, { label: "Teams", value: teams.length }, { label: "Sieger", value: teams[0]?.team_name ?? "–", sub: teams[0] ? `${last(teams[0])} Punkte` : "" }]),
+      chart(`Punkteentwicklung über die Runden (Top ${shown.length})`, "line", { labels: d.rounds, datasets: teamLineSets(shown, (t) => t.cumulative) }, {}, { height: 1040 }),
+      table("Punkte je Runde", [colNum("pos", "Platz", 0), colText("team_name", "Team"), ...d.rounds.map((r, k) => colNum(`r${k}`, r, 0)), colNum("total", "Gesamt", 0)], teams.map((t, i) => ({ ...t, pos: t.team_rank ?? i + 1, ...Object.fromEntries(t.round_points.map((v, k) => [`r${k}`, v])) }))),
+    ];
+  },
+
   "round-strength"(d) {
     const top = Number(state.params.top) || 10;
     const blocks = [];
@@ -596,6 +619,8 @@ function field(id, label, control) {
   return `<div class="field"><label for="${id}"${hint}>${esc(label)}</label>${control}</div>`;
 }
 
+const eventTeamCount = () => Number(state.meta.events.find((e) => String(e.id) === String(state.params.event_id))?.team_count) || 100;
+
 function renderFilters(def) {
   const p = state.params;
   const m = state.meta;
@@ -604,6 +629,11 @@ function renderFilters(def) {
   if (needs.has("event")) html += field("f-event", "Event", `<select id="f-event" class="wide">${m.events.slice().sort((a, b) => b.event_date.localeCompare(a.event_date)).map((e) => `<option value="${e.id}" ${String(e.id) === String(p.event_id) ? "selected" : ""}>${esc(e.event_date)} · ${esc(e.location)} · ${esc(e.winner || "–")}</option>`).join("")}</select>`);
   if (needs.has("round")) html += field("f-round", "Runde", `<select id="f-round"><option value="">Alle Runden</option>${m.rounds.map((r) => `<option ${r === p.round_name ? "selected" : ""}>${esc(r)}</option>`).join("")}</select>`);
   if (needs.has("min_events")) html += field("f-min", "Min. Eventteilnahmen", `<input id="f-min" type="number" title="Nur Teams mit mindestens so viel Eventteilnahmen werden berücksichtigt." min="1" max="100" value="${esc(p.min_events)}">`);
+  if (needs.has("event_top")) {
+    const total = eventTeamCount();
+    const val = Math.min(Number(p.event_top) || total, total);
+    html += field("f-event-top", "Top", `<input id="f-event-top" type="number" min="1" max="${total}" value="${val}">`);
+  }
   if (needs.has("top")) html += field("f-top", "Top", `<input id="f-top" type="number" min="1" max="100" value="${esc(p.top)}">`);
   $("#filters").innerHTML = html;
 
@@ -612,9 +642,10 @@ function renderFilters(def) {
     if (!el) return;
     el.addEventListener("change", async () => {
       p[key] = el.value;
+      if (key === "event_id") p.event_top = "";
       saveParams();
-      if (key === "year") {
-        await loadTeams();
+      if (key === "year" || (key === "event_id" && def.needs.includes("event_top"))) {
+        if (key === "year") await loadTeams();
         renderFilters(def);
       }
       if (reload) loadReport();
@@ -624,6 +655,8 @@ function renderFilters(def) {
   bind("#f-round", "round_name");
   bind("#f-min", "min_events");
   bind("#f-top", "top");
+  bind("#f-event-top", "event_top", false);
+  $("#f-event-top")?.addEventListener("change", () => loadReport());
 }
 
 const isAdmin = () => state.meta?.role === "admin";

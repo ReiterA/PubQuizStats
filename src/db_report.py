@@ -229,6 +229,68 @@ def get_event_result(
         }
 
 
+IMAGE_ROUND_NAME = ROUND_NAMES[7]
+IMAGE_ROUND_EARLY_LOCATIONS = {"Sandburg", "Josef Gastgarten"}
+
+
+def _event_round_order(location: str) -> List[str]:
+    order = [PUZZLE_NAME] + [name for num, name in ROUND_NAMES.items() if name != IMAGE_ROUND_NAME]
+    image_at = order.index(ROUND_NAMES[2]) + 1 if location in IMAGE_ROUND_EARLY_LOCATIONS else order.index(ROUND_NAMES[6]) + 1
+    order.insert(image_at, IMAGE_ROUND_NAME)
+    return order
+
+
+def get_event_progress_report(
+    db_path: str = DB_PATH_DEFAULT,
+    event_id: Optional[int] = None,
+    source_file: Optional[str] = None,
+    event_date: Optional[str] = None,
+    location: Optional[str] = None,
+) -> Dict:
+    """Cumulative points of every team after each round of one event."""
+    resolved_event_id = _resolve_event_id(
+        db_path, event_id=event_id, source_file=source_file, event_date=event_date, location=location
+    )
+    with _connect(db_path) as conn:
+        event = conn.execute(
+            "SELECT id, event_date, location FROM quiz_events WHERE id = ?", (resolved_event_id,)
+        ).fetchone()
+        if event is None:
+            raise ValueError(f"No event found with id={resolved_event_id}")
+        rounds = _event_round_order(event["location"])
+        teams = conn.execute(
+            """
+            SELECT id, team_name, team_rank, total, puzzle_points
+            FROM quiz_teams
+            WHERE event_id = ?
+            ORDER BY COALESCE(team_rank, 9999), total DESC, puzzle_points DESC, team_name ASC
+            """,
+            (resolved_event_id,),
+        ).fetchall()
+        result = []
+        for team in teams:
+            points = {PUZZLE_NAME: team["puzzle_points"] or 0}
+            for row in conn.execute(
+                "SELECT round_name, points FROM team_scores WHERE team_id = ?", (team["id"],)
+            ):
+                points[row["round_name"]] = row["points"] or 0
+            round_points = [points.get(name, 0) for name in rounds]
+            cumulative, running = [], 0
+            for value in round_points:
+                running += value
+                cumulative.append(running)
+            result.append(
+                {
+                    "team_name": team["team_name"],
+                    "team_rank": team["team_rank"],
+                    "total": team["total"],
+                    "round_points": round_points,
+                    "cumulative": cumulative,
+                }
+            )
+    return {"event": dict(event), "rounds": rounds, "teams": result}
+
+
 def get_championship_standings(year: int, db_path: str = DB_PATH_DEFAULT) -> Dict:
     """Return championship standings for the given year."""
     year_prefix = f"{year:04d}-%"

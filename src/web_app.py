@@ -88,6 +88,7 @@ REPORT_TYPES = [
     "puzzle-categories",
     "difficulty",
     "event-difficulty",
+    "event-progress",
     "round-strength",
     "team-category-detail",
 ]
@@ -187,6 +188,8 @@ def run_report(report: str, p: Params) -> dict:
             "data": db_report.get_event_team_result(team, **event_kwargs),
             "text": _capture(db_report.print_event_team_result, team, **event_kwargs),
         }
+    if report == "event-progress":
+        return {"data": db_report.get_event_progress_report(**event_kwargs), "text": None}
     if report == "standings":
         return {
             "data": db_report.get_championship_standings(year, db),
