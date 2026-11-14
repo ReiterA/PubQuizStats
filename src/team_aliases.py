@@ -13,6 +13,7 @@ TEAM_NAME_ALIASES = {
     # Lavezzi variants seen in imported event data
     "Lavezzi‘s verschwörung": "Lavezzi's Verschwörung",
     "Lavezzis Erben": "Lavezzi's Erben",
+    "Lavezzis Errben": "Lavezzi's Erben",
 
     # Turboschnecken with soft hyphen (appears in some Excel files)
     "Turbo­schnecken": "Turboschnecken",
